@@ -4,10 +4,10 @@ A repeatable administration tool for **Ubuntu 24.04 LTS**, targeting your **x86_
 
 ## Quick start
 
-After pushing the project to the `main` branch of [amindqn/server-guard](https://github.com/amindqn/server-guard), run this command in a **root Bash shell** on the server (use `sudo -i` first if needed):
+Run this command in a **root Bash shell** on the server (use `sudo -i` first if needed). It downloads the `master` branch of [amindqn/server-guard](https://github.com/amindqn/server-guard):
 
 ```bash
-bash <(curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/amindqn/server-guard/main/bootstrap.sh)
+bash <(curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/amindqn/server-guard/master/bootstrap.sh) --ref master
 ```
 
 The installer downloads the project and **opens the terminal setup UI automatically**. It guides you through dependency installation, the current SSH port, an administrator username/public key and a tested key login. It pauses for the new SSH login before applying access restrictions, then requires another new login to confirm the rollback-protected change. Your existing root/password connection stays available during the initial account setup.
@@ -59,7 +59,7 @@ After pushing **all project files**, including `bootstrap.sh`, `install.sh`, `se
   task_repo=${task_repo_url#https://github.com/}
   task_repo=${task_repo%/}
   task_repo=${task_repo%.git}
-  task_ref='main'
+  task_ref='master'
   task_bootstrap=$(mktemp)
   trap 'rm -f -- "$task_bootstrap"' EXIT
   curl --fail --show-error --silent --location --proto '=https' --proto-redir '=https' \

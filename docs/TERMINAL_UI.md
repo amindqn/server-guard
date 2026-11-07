@@ -2,10 +2,10 @@
 
 ## Quick install
 
-Push the full project to the `main` branch of [amindqn/server-guard](https://github.com/amindqn/server-guard), then run in a root Bash shell on Ubuntu 24.04:
+Run in a root Bash shell on Ubuntu 24.04, using the repository's `master` branch:
 
 ```bash
-bash <(curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/amindqn/server-guard/main/bootstrap.sh)
+bash <(curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/amindqn/server-guard/master/bootstrap.sh) --ref master
 ```
 
 The command uses the same short-installer and persistent management-menu workflow that motivated the [3x-ui reference](https://github.com/MHSanaei/3x-ui#quick-start). Server Guard's menus configure the services described in this repository; no 3x-ui code or panel is installed by this command.

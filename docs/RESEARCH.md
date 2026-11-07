@@ -62,7 +62,7 @@ The current production notes require AVX for x86_64 and document an incompatible
 
 ## GitHub installation (1.1.0)
 
-The standalone `bootstrap.sh` accepts an explicit public repository and branch/tag/commit. Its README command downloads the bootstrap file completely into a private temporary file before executing it. The bootstrap then downloads the full source tree over verified HTTPS, optionally checks an expected archive hash, validates archive paths/types/size and invokes the normal local installer. A full commit may be selected for reproducibility; a moving branch is intentionally treated as code published by the trusted repository, not a cryptographically immutable release. This installation changes the tool files and installs documentation; access-hardening remains a separate guarded action.
+The standalone `bootstrap.sh` accepts an explicit public repository and branch/tag/commit. The published repository uses `master`; the quick command selects `master` in both the raw-script URL and `--ref` so it also works with older copies whose default was `main`. The downloaded-script README command fetches the bootstrap file completely into a private temporary file before executing it. The bootstrap then downloads the full source tree over verified HTTPS, optionally checks an expected archive hash, validates archive paths/types/size and invokes the normal local installer. A full commit may be selected for reproducibility; a moving branch is intentionally treated as code published by the trusted repository, not a cryptographically immutable release. This installation changes the tool files and installs documentation; access-hardening remains a separate guarded action.
 
 ## Code structure
 

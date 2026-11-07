@@ -5,7 +5,7 @@ server_guard_bootstrap_main() {
   set -Eeuo pipefail
   umask 077
   task_repo='amindqn/server-guard'
-  task_ref='main'
+  task_ref='master'
   task_sha256=''
   task_ui=1
   while [[ $# -gt 0 ]]; do
@@ -20,8 +20,8 @@ server_guard_bootstrap_main() {
         shift 2 ;;
       --no-ui) task_ui=0; shift ;;
       -h|--help)
-        echo 'Usage: sudo bash bootstrap.sh [--repo OWNER/REPO] [--ref main|TAG|COMMIT] [--sha256 SOURCE_ARCHIVE_SHA256] [--no-ui]'
-        echo 'Default repository: amindqn/server-guard (main branch).'
+        echo 'Usage: sudo bash bootstrap.sh [--repo OWNER/REPO] [--ref BRANCH|TAG|COMMIT] [--sha256 SOURCE_ARCHIVE_SHA256] [--no-ui]'
+        echo 'Default repository: amindqn/server-guard (master branch).'
         echo 'Installs the tool and opens guided setup in a terminal. --no-ui skips interactive setup.'
         return 0 ;;
       *) echo "Unknown option: $1" >&2; return 1 ;;
