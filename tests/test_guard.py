@@ -395,6 +395,7 @@ class RecoveryTests(unittest.TestCase):
 
     def test_key_login_proof_matches_exact_connection(self):
         message = {"MESSAGE": "Accepted publickey for admin from 203.0.113.1 port 50000 ssh2: ED25519 SHA256:test",
+                   "_UID": "0", "_COMM": "sshd",
                    "__REALTIME_TIMESTAMP": "1234567890000000"}
         runner = FakeRunner()
         with patch.object(runner, "run", return_value=subprocess.CompletedProcess([], 0, json.dumps(message))):

@@ -19,6 +19,16 @@ class GitHubBootstrapTests(unittest.TestCase):
         self.assertIn("--repo OWNER/REPO", result.stdout)
         self.assertIn("--sha256", result.stdout)
 
+    def test_standalone_removal_entrypoints_show_help_without_installing(self):
+        commands = [["bash", str(ROOT / "uninstall.sh"), "--help"],
+                    [sys.executable, "-I", str(ROOT / "scripts/uninstall_entry.py"), "--help"]]
+        for command in commands:
+            with self.subTest(command=command):
+                result = subprocess.run(command, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("--dry-run", result.stdout)
+                self.assertIn("--purge", result.stdout)
+
     def test_repo_ref_checksum_injection_rejected_before_host_operations(self):
         cases = [["--repo", "owner/repo;id"], ["--repo", "owner/repo", "--ref", "../main"],
                  ["--repo", "owner/repo", "--sha256", "abcd"], ["--repo"]]

@@ -13,7 +13,8 @@ import textwrap
 from . import __version__
 from .core import GuardError, POLICY, domain, network, port, public_key, username
 from .mongodb import app_database, mongo_name
-from .services import checksum
+from .services import DB_ENGINES, checksum
+from .ssh_access import client_command
 
 
 class Cancelled(Exception):
@@ -85,6 +86,20 @@ class TerminalConsole:
                 return False
             self.say("Enter y or n, or :back to cancel.", "error")
 
+    def options(self, label, choices, default):
+        """Numbered choices with readable names; accept exact values for scripts/tests."""
+        self.say(label)
+        for index, (name, value) in enumerate(choices, 1):
+            self.say(f"  {index}  {name}" + (" (default)" if value == default else ""))
+        def selected(value):
+            if value.isdigit() and 1 <= int(value) <= len(choices):
+                return choices[int(value) - 1][1]
+            if value in {item[1] for item in choices}:
+                return value
+            raise GuardError("Choose one of the displayed numbers, or :back to cancel.")
+        default_index = next(str(i) for i, (_, value) in enumerate(choices, 1) if value == default)
+        return self.ask("Choice", default_index, selected)
+
     def choose(self, title, items, subtitle=None, back="Back"):
         self.heading(title, subtitle)
         actions = {item.key: item.action for item in items}
@@ -118,6 +133,7 @@ class TerminalApp:
         self.h = host
         self.execute = execute
         self.c = console or TerminalConsole()
+        self.exit_requested = False
 
     def run_command(self, *args):
         self.c.say("Running: server-guard " + shlex.join(str(a) for a in args), "note")
@@ -132,7 +148,7 @@ class TerminalApp:
         return False
 
     def page(self, title, items, subtitle=None):
-        while True:
+        while not self.exit_requested:
             action = self.c.choose(title, items, subtitle)
             if action is None:
                 return
@@ -162,16 +178,15 @@ class TerminalApp:
             return f"Saved state needs review: {exc}. Status, recovery and Exit remain available."
 
     def run(self):
-        items = [MenuItem("1", "Guided first-time setup / resume", self.setup),
-                 MenuItem("2", "SSH access and root login", self.ssh_menu),
-                 MenuItem("3", "Linux users and session limits", self.users_menu),
-                 MenuItem("4", "Firewall and public web ports", self.firewall_menu),
-                 MenuItem("5", "CloudPanel / aaPanel", self.panel_menu),
-                 MenuItem("6", "MongoDB database and users", self.mongodb_menu),
-                 MenuItem("7", "V2Ray service and clients", self.v2ray_menu),
-                 MenuItem("8", "Status, updates and security audit", self.maintenance_menu),
-                 MenuItem("9", "Review, apply, confirm or roll back", self.access_menu)]
-        while True:
+        items = [MenuItem("1", "Setup assistant / next step", self.setup),
+                 MenuItem("2", "Accounts, SSH keys and login access", self.accounts_menu),
+                 MenuItem("3", "Firewall and website access", self.firewall_menu),
+                 MenuItem("4", "Applications: web panel and MongoDB", self.applications_menu),
+                 MenuItem("5", "V2Ray and client connections", self.v2ray_menu),
+                 MenuItem("6", "System health, updates and audit", self.maintenance_menu),
+                 MenuItem("7", "Review changes, confirm or recover", self.access_menu),
+                 MenuItem("8", "Uninstall Server Guard", self.uninstall_menu)]
+        while not self.exit_requested:
             try:
                 action = self.c.choose("Management", items, self.summary(), back="Exit")
                 if action is None:
@@ -184,6 +199,52 @@ class TerminalApp:
                 self.c.say("Cancelled. Returning to the management menu.", "note")
             except (GuardError, OSError, ValueError, KeyError) as exc:
                 self.c.say(f"Error: {exc}", "error")
+
+    def accounts_menu(self):
+        self.page("Accounts and login access", [
+            MenuItem("1", "Users, permissions and session limits", self.users_menu),
+            MenuItem("2", "SSH port, source allowlist and root access", self.ssh_menu),
+            MenuItem("3", "SSH key setup / forgotten passphrase help", self.key_help),
+            MenuItem("4", "Diagnose this SSH connection", lambda: self.run_command("ssh", "diagnose")),
+            MenuItem("5", "Verify this new administrator key login", lambda: self.run_command("verify-login"))])
+
+    def applications_menu(self):
+        self.page("Applications and databases", [
+            MenuItem("1", "CloudPanel / aaPanel installation and access", self.panel_menu),
+            MenuItem("2", "MongoDB installation, users and service", self.mongodb_menu),
+            MenuItem("3", "Public HTTP / HTTPS and extra ports", self.firewall_menu)],
+            "Recommended order: confirm server protection, install one panel, enable web access, then add optional MongoDB.")
+
+    def key_help(self):
+        self.c.heading("SSH keys: which password belongs where?")
+        self.c.say("KEY PASSPHRASE: chosen on your computer in ssh-keygen; unlocks the private key locally.")
+        self.c.say("SERVER ACCOUNT PASSWORD: signs into password-enabled SSH; this does not prove a key works.")
+        self.c.say("SUDO PASSWORD: the server account password used after login to run administration commands.")
+        self.c.say("Keep your existing server session open. On YOUR COMPUTER:", "note")
+        self.c.say("ssh-keygen -t ed25519 -a 100 -f ~/.ssh/server_guard_admin")
+        self.c.say("Choose a key passphrase you can remember/store. Typing passwords does not echo characters.")
+        self.c.say("Paste only the .pub file into the user/key form. Never paste or copy the private key to the server.")
+        try:
+            state = self.policy()
+            admins = [name for name, item in state["users"].items() if item["role"] == "admin" and not item.get("disabled")]
+            name, number = (admins[0] if admins else "admin"), state["ssh"]["port"]
+        except (GuardError, ValueError, KeyError):
+            name, number = "admin", 22
+        self.c.say("Test with a NEW key-only connection from your computer (replace SERVER_IP and key path):")
+        self.c.say(client_command(name, number))
+        self.c.say("Then on the server: sudo --preserve-env=SSH_CONNECTION server-guard setup")
+        self.c.say("Forgot the key passphrase? Create a new key under a new filename, then use Add SSH key here.")
+        self.c.say("Adding a key retains the old key until you have tested the replacement.")
+
+    def uninstall_menu(self):
+        from .uninstall import UninstallManager
+        manager = UninstallManager(self.h)
+        plan = manager.plan()
+        self.c.heading("Uninstall: review what stays")
+        manager.describe(plan)
+        if self.c.yes("Remove the manager and keep working protection/apps/data?"):
+            self.run_command("uninstall", "--yes", "--expected", plan["fingerprint"])
+            self.exit_requested = True
 
     def setup(self):
         try:
@@ -201,10 +262,12 @@ class TerminalApp:
             self.c.say("If you do not have a key yet, run on YOUR COMPUTER:")
             self.c.say("ssh-keygen -t ed25519 -a 100 -f ~/.ssh/server_guard_admin")
             self.c.say("Paste the contents of ~/.ssh/server_guard_admin.pub below.")
+            self.c.say("The key passphrase is chosen on your computer. The separate sudo password is chosen on the server.")
         name = self.c.ask("Linux username", "admin" if administrator else None, username)
         role = "admin"
         if not administrator:
-            role = self.c.ask("Role (admin / developer / sftp)", "developer", self.role)
+            role = self.c.options("Choose access level", [("Developer: shell, no sudo", "developer"),
+                ("Administrator: full sudo", "admin"), ("SFTP only: upload/download, no shell", "sftp")], "developer")
         sessions = self.c.ask("Concurrent SSH transports", 3 if role == "admin" else 2,
                               bounded_number(2 if role == "admin" else 1))
         key = self.c.ask("Public key OR .pub file path on THIS server", validate=self.key_input)
@@ -227,6 +290,8 @@ class TerminalApp:
 
     @staticmethod
     def key_input(value):
+        if value.startswith("-----BEGIN"):
+            raise GuardError("This is a private key. Keep it on your computer and supply only its .pub public key.")
         if value.startswith(("ssh-", "ecdsa-", "sk-")):
             return public_key(value)
         path = Path(value).expanduser()
@@ -240,7 +305,7 @@ class TerminalApp:
             MenuItem("2", "Create admin / developer / SFTP user", self.create_user),
             MenuItem("3", "Adopt an existing panel-created account", self.adopt_user),
             MenuItem("4", "Change concurrent SSH session limit", self.user_limit),
-            MenuItem("5", "Replace SSH public key", self.user_key),
+            MenuItem("5", "Add or replace a public SSH key", self.user_key),
             MenuItem("6", "Disable a user", self.disable_user)])
 
     def managed_user(self):
@@ -253,10 +318,15 @@ class TerminalApp:
             return value
         return self.c.ask("Managed username (" + ", ".join(names) + ")", validate=check)
 
-    def adopt_user(self):
+    def adopt_user(self, administrator=False):
         name = self.c.ask("Existing Linux/site username", validate=username)
-        count = self.c.ask("Concurrent SSH transports", 2, bounded_number())
-        self.operation("user", "adopt", name, "--role", "developer", "--sessions", count)
+        role = "admin" if administrator else self.c.options("Existing account's role", [
+            ("Developer / site account", "developer"), ("Existing sudo administrator", "admin")], "developer")
+        count = self.c.ask("Concurrent SSH transports", 3 if role == "admin" else 2,
+                           bounded_number(2 if role == "admin" else 1))
+        if self.operation("user", "adopt", name, "--role", role, "--sessions", count) and administrator:
+            if self.c.yes("Add your public SSH key to this account now?", default=True):
+                self.user_key(name)
 
     def user_limit(self):
         name = self.managed_user()
@@ -264,15 +334,18 @@ class TerminalApp:
         count = self.c.ask("New session limit", validate=bounded_number(minimum))
         self.operation("user", "limit", name, count)
 
-    def user_key(self):
-        name = self.managed_user()
+    def user_key(self, name=None):
+        name = name or self.managed_user()
+        mode = self.c.options("How to update SSH keys", [
+            ("Add a key and keep existing keys (recommended)", "append"),
+            ("Replace all current keys", "replace")], "append")
         key = self.c.ask("New public key OR .pub file", validate=self.key_input)
-        self.c.say("This immediately replaces the user's current authorized key. Keep recovery access open.", "note")
-        if self.c.yes("Replace this SSH key now?"):
+        self.c.say("Test the new key in a separate terminal before closing existing server sessions.", "note")
+        if self.c.yes("Save this public key now?"):
             with tempfile.TemporaryDirectory(prefix="server-guard-ui-key-") as temp:
                 path = Path(temp) / "key.pub"
                 path.write_text(key)
-                self.run_command("user", "key", name, "--key-file", path)
+                self.run_command("user", "key", name, "--key-file", path, *(["--append"] if mode == "append" else []))
 
     def disable_user(self):
         name = self.managed_user()
@@ -285,7 +358,9 @@ class TerminalApp:
             MenuItem("3", "Restrict allowed source IPs/networks", self.ssh_sources),
             MenuItem("4", "Disable root SSH login", lambda: self.operation("ssh", "root", "disable")),
             MenuItem("5", "Allow root SSH with a key only", lambda: self.operation("ssh", "root", "key-only")),
-            MenuItem("6", "Review and apply staged settings", self.review_apply)],
+            MenuItem("6", "Review and apply staged settings", self.review_apply),
+            MenuItem("7", "Diagnose password/key login", lambda: self.run_command("ssh", "diagnose")),
+            MenuItem("8", "SSH key and passphrase help", self.key_help)],
             "SSH/root/source changes are staged. Review and apply them, then confirm using a new key login.")
 
     def ssh_port(self):
@@ -359,19 +434,29 @@ class TerminalApp:
             "Install one panel on a fresh server, after confirming the baseline. Add MongoDB afterward.")
 
     def install_panel(self, provider):
+        if self.h.tx.pending() or not self.h.f.path("/etc/server-guard/firewall.nft").exists():
+            self.c.say("Complete and confirm the SSH/firewall setup before installing a panel.", "note")
+            self.c.say("Opening Guided setup. After confirming from a new key login, return to this panel menu.")
+            self.setup()
+            return
         self.c.say("The vendor installer runs as root. Keep its management port closed in the provider firewall.", "note")
         if self.c.yes(f"Download {provider}'s installer for review?", default=True):
             self.run_command("panel", "download", provider)
         self.c.say(f"Review: /var/lib/server-guard/downloads/{provider}.sh")
-        digest = self.c.ask("Approved installer SHA-256 (:back to install later)", validate=checksum)
-        args = ["panel", "install", provider, "--sha256", digest]
+        args = ["panel", "install", provider]
+        verification = "manual"
         if provider == "cloudpanel":
-            engines = {"MYSQL_8.4", "MYSQL_8.0", "MARIADB_11.4", "MARIADB_10.11"}
-            def engine(value):
-                if value not in engines:
-                    raise GuardError("Choose " + ", ".join(sorted(engines)))
-                return value
-            args += ["--db-engine", self.c.ask("Database engine", "MYSQL_8.4", engine)]
+            verification = self.c.options("Verify the downloaded installer", [
+                ("Compare with checksum in CloudPanel's official guide (recommended)", "official"),
+                ("Enter a trusted SHA-256 manually", "manual")], "official")
+        if verification == "official":
+            args += ["--official-checksum"]
+        else:
+            digest = self.c.ask("Approved installer SHA-256 (:back to install later)", validate=checksum)
+            args += ["--sha256", digest]
+        if provider == "cloudpanel":
+            args += ["--db-engine", self.c.options("Panel database engine (MongoDB is added separately)",
+                [(value.replace("_", " "), value) for value in DB_ENGINES], "MYSQL_8.4")]
         self.operation(*args, prompt="Run this approved vendor installer now?")
 
     def mongodb_menu(self):
@@ -403,11 +488,8 @@ class TerminalApp:
         admin = self.c.ask("MongoDB administrator name", "mongoAdmin", mongo_name)
         args = ["mongodb", action, name, "--database", database, "--admin", admin]
         if action == "user-add":
-            def role(value):
-                if value not in {"read", "readWrite"}:
-                    raise GuardError("Choose read or readWrite.")
-                return value
-            args += ["--role", self.c.ask("Permissions (read / readWrite)", "readWrite", role)]
+            args += ["--role", self.c.options("Database permissions", [
+                ("Read and write this database", "readWrite"), ("Read only this database", "read")], "readWrite")]
         self.operation(*args)
 
     def v2ray_menu(self):
@@ -453,7 +535,9 @@ class TerminalApp:
             MenuItem("1", "Listening ports and security service status", lambda: self.run_command("status")),
             MenuItem("2", "Run Lynis security audit", lambda: self.run_command("audit")),
             MenuItem("3", "Install / repair base dependencies", lambda: self.operation("prepare")),
-            MenuItem("4", "Review and install package updates", lambda: self.operation("update"))])
+            MenuItem("4", "Review and install package updates", lambda: self.operation("update")),
+            MenuItem("5", "Diagnose this SSH connection", lambda: self.run_command("ssh", "diagnose")),
+            MenuItem("6", "SSH key help", self.key_help)])
 
 
 class SetupWizard:
@@ -467,6 +551,18 @@ class SetupWizard:
             self.c.say("An access change is awaiting a NEW administrator login. Confirm or roll back before continuing.", "note")
             self.app.access_menu()
             return
+        prepared = self.h.f.path("/var/lib/server-guard/prepared.json").exists()
+        policy_ready = self.h.f.path(POLICY).exists()
+        users = self.app.policy()["users"] if policy_ready else {}
+        admin_ready = any(item["role"] == "admin" and not item.get("disabled") for item in users.values())
+        applied = self.h.f.path("/etc/server-guard/firewall.nft").exists()
+        self.c.say("SETUP CHECKLIST")
+        next_shown = False
+        for ready, label in [(prepared, "1. Base packages"), (policy_ready, "2. Initial policy"),
+                             (admin_ready, "3. Administrator account"), (applied, "4. Key login and confirmed protection")]:
+            marker = "[DONE] " if ready else "[TODO] " if next_shown else "[NEXT] "
+            next_shown = next_shown or not ready
+            self.c.say(marker + label)
         if not self.h.f.path("/var/lib/server-guard/prepared.json").exists():
             self.c.say("Step 1 / 4: Install Ubuntu security and management dependencies.")
             if not self.app.operation("prepare", prompt="Install the required packages?"):
@@ -483,7 +579,12 @@ class SetupWizard:
                   if item["role"] == "admin" and not item.get("disabled")]
         if not admins:
             self.c.say("Step 3 / 4: Create a non-root administrator with your public SSH key.")
-            self.app.create_user(administrator=True)
+            account = self.c.options("Administrator account", [("Create a new administrator", "new"),
+                ("Use an existing sudo administrator", "existing")], "new")
+            if account == "existing":
+                self.app.adopt_user(administrator=True)
+            else:
+                self.app.create_user(administrator=True)
             state = self.app.policy()
             admins = [name for name, item in state["users"].items()
                       if item["role"] == "admin" and not item.get("disabled")]
@@ -492,7 +593,8 @@ class SetupWizard:
         if not self.h.f.path("/etc/server-guard/firewall.nft").exists():
             self.c.say("Step 4 / 4: Verify a second administrator key login, then apply protection.")
             self.c.say("Keep this SSH connection open. In a NEW terminal on your computer run:", "note")
-            self.c.say(f"ssh -o IdentitiesOnly=yes -i ~/.ssh/server_guard_admin -p {state['ssh']['port']} {admins[0]}@SERVER_IP")
+            self.c.say(client_command(admins[0], state['ssh']['port']))
+            self.c.say("Use the matching PRIVATE key on your computer. Enter its local key passphrase, not the server account password.")
             self.c.say("Then, inside that new SSH connection:")
             self.c.say("sudo --preserve-env=SSH_CONNECTION server-guard setup")
             if os.environ.get("SUDO_USER") not in admins:

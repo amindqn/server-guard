@@ -139,7 +139,8 @@ class Host:
                 account = pwd.getpwnam(name)
                 if "sudo" not in [g.gr_name for g in grp.getgrall() if name in g.gr_mem]:
                     raise GuardError(f"{name} is no longer in the sudo group.")
-                public_key(self.f.path(f"{account.pw_dir}/.ssh/authorized_keys").read_text())
+                key_path = self.f.path(f"{account.pw_dir}/.ssh/authorized_keys")
+                self.r.run("ssh-keygen", "-l", "-f", key_path)
                 available.append(name)
         if not available:
             raise GuardError("An enabled managed admin with an SSH public key and sudo access is required.")
@@ -237,9 +238,7 @@ class Host:
             self.f.write("/etc/server-guard/sshd-sessions.json", json.dumps(limits))
             pam_path = self.f.path("/etc/pam.d/sshd")
             pam = pam_path.read_text()
-            hook = "session required pam_exec.so quiet /opt/server-guard/server_guard/pam_sessions.py"
-            if hook not in pam.splitlines():
-                self.f.write("/etc/pam.d/sshd", pam.rstrip() + "\n" + hook + "\n", 0o644)
+            self.f.write("/etc/pam.d/sshd", SSHBuilder.pam_config(pam), 0o644)
             self.check_effective_ssh(state)
             self.f.write("/etc/server-guard/firewall.nft", FirewallBuilder.build(state))
             self.f.write("/etc/systemd/system/server-guard-firewall.service", FIREWALL_SERVICE, 0o644)

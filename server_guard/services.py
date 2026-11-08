@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from html.parser import HTMLParser
 import os
 from pathlib import Path
 import platform
@@ -18,6 +19,28 @@ INSTALLERS = {
     "cloudpanel": "https://installer.cloudpanel.io/ce/v2/install.sh",
     "aapanel": "https://www.aapanel.com/script/install_panel_en.sh",
 }
+CLOUDPANEL_GUIDE = "https://www.cloudpanel.io/docs/v2/getting-started/other/"
+DB_ENGINES = ("MYSQL_8.4", "MYSQL_8.0", "MARIADB_12.3", "MARIADB_11.4", "MARIADB_10.11")
+
+
+class PublishedChecksum(HTMLParser):
+    """Read the publisher's checksum command, including syntax-highlighted HTML."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+    @classmethod
+    def parse(cls, html):
+        parser = cls()
+        parser.feed(html)
+        matches = set(re.findall(r'''echo\s+["']([a-fA-F0-9]{64})\s+install\.sh["']''',
+                                 "".join(parser.parts)))
+        if len(matches) != 1:
+            raise GuardError("The official guide has no unique installer checksum. Review it and use --sha256; installation was not started.")
+        return checksum(matches.pop())
 
 
 class ManagedServices:
@@ -73,14 +96,26 @@ class PanelManager:
         print("Review the script and compare its checksum with a trusted publisher source.")
         print(f"Execute only after review: sudo server-guard panel install {provider} --sha256 TRUSTED_SHA256")
 
-    def install(self, provider, expected, db_engine):
+    def official_checksum(self, provider):
+        if provider != "cloudpanel":
+            raise GuardError("Automatic publisher-checksum verification is available only for CloudPanel. Review aaPanel manually.")
+        with tempfile.TemporaryDirectory(prefix="server-guard-checksum-") as temp:
+            guide = Path(temp) / "guide.html"
+            download(self.h.r, CLOUDPANEL_GUIDE, guide)
+            expected = PublishedChecksum.parse(guide.read_text())
+        print(f"Publisher: {CLOUDPANEL_GUIDE}\nPublished installer SHA256: {expected}")
+        return expected
+
+    def install(self, provider, expected, db_engine, official=False):
         self.h.tx.require_clear()
-        expected = checksum(expected)
+        expected = self.official_checksum(provider) if official else checksum(expected)
         target = self.h.f.path(f"/var/lib/server-guard/downloads/{provider}.sh")
         if not target.exists() or sha256(target) != expected:
             raise GuardError("Installer checksum mismatch/missing. Download and review it first.")
         if not self.h.f.path("/etc/server-guard/firewall.nft").exists():
-            raise GuardError("Apply and confirm the firewall/SSH baseline before installing a panel.")
+            raise GuardError("Finish Guided setup first: sudo --preserve-env=SSH_CONNECTION server-guard setup. "
+                             "Verify the administrator key login, apply the security plan, and confirm "
+                             "from a new login before retrying panel installation.")
         for p in ["/www/server/panel", "/usr/bin/clpctl", "/etc/cloudpanel"]:
             if self.h.f.path(p).exists():
                 raise GuardError("A panel is already installed. Use its supported update process.")
@@ -216,12 +251,12 @@ ExecStart=/usr/local/sbin/server-guard v2ray-egress-load
         self.h.r.run(self.BINARY, "version", capture=False)
         print("Pinned V2Ray binary installed. Configure it next; no public port was opened.")
 
-    def egress_load(self):
+    @staticmethod
+    def egress_rules():
         uid = pwd.getpwnam("sg-v2ray").pw_uid
         if uid == 0:
             raise GuardError("Refusing root V2Ray UID.")
-        exists = self.h.r.run("nft", "list", "table", "inet", "server_guard_v2ray", check=False).returncode == 0
-        rules = ("delete table inet server_guard_v2ray\n" if exists else "") + f"""table inet server_guard_v2ray {{
+        return f"""table inet server_guard_v2ray {{
  chain output {{
   type filter hook output priority -11; policy accept;
   ct state established,related accept
@@ -233,6 +268,10 @@ ExecStart=/usr/local/sbin/server-guard v2ray-egress-load
  }}
 }}
 """
+
+    def egress_load(self):
+        exists = self.h.r.run("nft", "list", "table", "inet", "server_guard_v2ray", check=False).returncode == 0
+        rules = ("delete table inet server_guard_v2ray\n" if exists else "") + self.egress_rules()
         self.h.r.run("nft", "--check", "-f", "-", input=rules)
         self.h.r.run("nft", "-f", "-", input=rules)
 

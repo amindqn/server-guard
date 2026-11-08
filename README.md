@@ -24,9 +24,34 @@ Resume the first-time wizard from the new administrator SSH connection:
 sudo --preserve-env=SSH_CONNECTION server-guard setup
 ```
 
-The numbered menus cover **SSH/root access, users/session limits, firewall rules, CloudPanel/aaPanel, MongoDB, V2Ray, service start/stop/restart, audits, and apply/confirm/rollback**. Enter a number, press Enter to accept a default, use `0` to go back, or enter `:back` to cancel a form. Colors are optional (`NO_COLOR=1`), and all choices/errors are written as text. No additional terminal UI packages are needed.
+The home menu has eight groups: **setup, accounts/SSH, firewall/web, applications/databases, V2Ray, health/updates, changes/recovery, and uninstall**. Existing features remain available inside those groups. Setup shows completed steps and the next action; roles, database engines and key actions use numbered choices. Enter a number, press Enter to accept a default, use `0` to go back, or enter `:back` to cancel a form. Colors are optional (`NO_COLOR=1`), and all choices/errors are written as text. No additional terminal UI packages are needed.
 
 For an install without opening the UI, append `--no-ui`. With no interactive terminal, the installer prints the command to open setup later. Have provider console access and a snapshot ready before applying security changes. Keep the panel/database ports closed in your provider firewall. [Detailed terminal walkthrough](docs/TERMINAL_UI.md).
+
+To update the management tool, rerun the same install command. Existing policy/accounts are retained. Confirm or roll back a pending access change before updating.
+
+## Quick uninstall
+
+Run in a **root Bash shell on the server**, including when your installed version has no uninstall command:
+
+```bash
+bash <(curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/amindqn/server-guard/master/uninstall.sh)
+```
+
+It downloads the standalone uninstaller without installing/updating the manager, shows a removal plan and requests confirmation. To preview only, append `--dry-run`. The bootstrap also accepts `--uninstall` with the same options.
+
+With the updated manager already installed:
+
+```bash
+sudo server-guard uninstall --dry-run  # review only
+sudo server-guard uninstall            # review and type UNINSTALL
+```
+
+For automation, `sudo server-guard uninstall --yes` executes the same plan without a prompt. Menu **8** also removes the manager.
+
+**Removal preserves protection and applications.** It removes the management command/package/docs/history; it keeps Linux users, SSH keys, packages, panels, MongoDB, V2Ray and all application/database data. It also keeps current SSH settings, Fail2Ban, automatic updates and firewall/session limits. Necessary standalone helpers are retained under `/usr/local/lib/server-guard-retained`; `/etc/server-guard` remains for recovery or reinstall. SSH and applications are not restarted. This is manager removal, not a reset of Ubuntu or a re-enable of root/password login.
+
+A private recovery copy is created under `/var/backups/server-guard/`; its location is printed and recorded in `last-uninstall.json` there. Pending access changes block removal. If validation fails, the manager is kept and runtime edits are restored. `--purge` additionally removes unused `/etc/server-guard` configuration **only before hardening or optional-service setup**. It never deletes application data or users. [Removal details](docs/OPERATIONS.md#uninstall-and-reinstall).
 
 The default panel recommendation is **CloudPanel**, because it supports static/front-end sites, Node.js, Python, PHP, reverse proxies, and separate Admin / Site Manager / site-specific User permissions. Its panel-managed databases are MySQL/MariaDB. **MongoDB is an optional service managed by this tool**, alongside either panel. **aaPanel is also supported** if you prefer its broader plugin and database ecosystem. Install exactly one panel first, on an otherwise empty server; then add MongoDB. PostgreSQL/Redis need separate installation with CloudPanel. MongoDB supplements the panel's database engine; it does not replace CloudPanel's required MySQL/MariaDB installation.
 
@@ -90,13 +115,13 @@ scp -r /PATH/TO/server-config root@SERVER_IP:/root/server-config
 
 Use `scp -P CURRENT_SSH_PORT` if the current port is not 22. Replace placeholders and paths with real values. Alternatively, copy and extract the supplied release archive on the server.
 
-For the archive, copy `server-guard-1.2.0.tar.gz` and its `.sha256` file to `/root`, then on the server run:
+For the archive, copy `server-guard-1.3.0.tar.gz` and its `.sha256` file to `/root`, then on the server run:
 
 ```bash
 cd /root
-sha256sum -c server-guard-1.2.0.tar.gz.sha256
-tar -xzf server-guard-1.2.0.tar.gz
-cd /root/server-guard-1.2.0
+sha256sum -c server-guard-1.3.0.tar.gz.sha256
+tar -xzf server-guard-1.3.0.tar.gz
+cd /root/server-guard-1.3.0
 ```
 
 Use this extracted directory in place of `/root/server-config` below. The adjacent checksum detects transfer damage; obtain the archive/checksum through a trusted channel.
@@ -119,12 +144,16 @@ Use your **actual current SSH port** in `init`. `update` asks before installing 
 Open a **second terminal on your computer**:
 
 ```bash
-ssh -o IdentitiesOnly=yes -o PreferredAuthentications=publickey -o PasswordAuthentication=no \
-  -i ~/.ssh/server_guard_admin admin@SERVER_IP
+ssh -o IdentitiesOnly=yes -o ControlPath=none -o PreferredAuthentications=publickey \
+  -o PasswordAuthentication=no -o KbdInteractiveAuthentication=no -i ~/.ssh/server_guard_admin admin@SERVER_IP
 sudo --preserve-env=SSH_CONNECTION server-guard verify-login
 ```
 
 Add `-p CURRENT_SSH_PORT` to SSH when appropriate. Enter the administrator's local password for sudo. Verification matches this transport to an `Accepted publickey` SSH journal entry. If it fails, fix the new login before continuing. Proof is valid for one hour.
+
+`Enter passphrase for key ...` asks for the passphrase you chose when creating the key **on your computer**. It is separate from the server account password and the sudo password. Repeated prompts usually mean the key passphrase was not accepted. If you forgot it, create a new key under a **new filename**, keep your working server session open and use Accounts → Users → Add or replace a public SSH key → **Add**. Test the new connection before removing old keys. The CLI equivalent is `sudo server-guard user key admin --key-file /path/to/new.pub --append`. Append supports ordinary public-key lines; custom authorized-key options require manual review and are left untouched on refusal.
+
+Use `sudo --preserve-env=SSH_CONNECTION server-guard ssh diagnose` to see whether the current transport authenticated with a public key or a password. A password login cannot satisfy `verify-login`; switching users with `su` or `sudo` does not change the transport's authentication method.
 
 From an open administrator or root SSH session:
 
@@ -156,14 +185,16 @@ sudo server-guard panel download cloudpanel
 sudo less /var/lib/server-guard/downloads/cloudpanel.sh
 ```
 
-Compare the displayed SHA-256 with the value in [CloudPanel's official Ubuntu installation instructions](https://www.cloudpanel.io/docs/v2/getting-started/other/). Then:
+The recommended option checks the downloaded installer against the checksum in [CloudPanel's official Ubuntu installation instructions](https://www.cloudpanel.io/docs/v2/getting-started/other/), without copying a long hash manually:
 
 ```bash
-sudo server-guard panel install cloudpanel --sha256 TRUSTED_SHA256 --db-engine MYSQL_8.4
+sudo server-guard panel install cloudpanel --official-checksum --db-engine MYSQL_8.4
 sudo server-guard panel info
 ```
 
-For **aaPanel instead**, use `panel download aapanel`, review `/var/lib/server-guard/downloads/aapanel.sh`, and use `panel install aapanel --sha256 REVIEWED_SHA256`. aaPanel may not publish an independently verifiable checksum for that moving script: inspect and approve the exact downloaded file and its dependencies, or do not execute it. There is no forced bypass for a checksum mismatch.
+If the guide cannot be read, has ambiguous checksums or disagrees with the downloaded file, installation stops. A reviewed `--sha256 TRUSTED_SHA256` remains available instead of `--official-checksum`.
+
+For **aaPanel instead**, use `panel download aapanel`, review `/var/lib/server-guard/downloads/aapanel.sh`, and use `panel install aapanel --sha256 REVIEWED_SHA256`. aaPanel may not publish an independently verifiable checksum for that moving script: inspect and approve the exact downloaded file and its dependencies, or do not execute it. Automatic publisher-checksum lookup is available only for CloudPanel. There is no forced bypass for a checksum mismatch.
 
 `panel info` prints an SSH tunnel command. It deliberately requests a login session using `sleep 3600`, so the connection is counted. For CloudPanel, on **your computer**:
 

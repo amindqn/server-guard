@@ -145,7 +145,7 @@ class Files:
                 os.unlink(tmp)
 
 
-def write_user_key(home, key, uid, gid):
+def write_user_key(home, key, uid, gid, append=False):
     """Pin directory descriptors so a user cannot redirect a root write via symlinks."""
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     homefd = os.open(home, flags)
@@ -159,6 +159,25 @@ def write_user_key(home, key, uid, gid):
         sshfd = os.open(".ssh", flags, dir_fd=homefd)
         os.fchown(sshfd, uid, gid)
         os.fchmod(sshfd, 0o700)
+        if append:
+            try:
+                oldfd = os.open("authorized_keys", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=sshfd)
+            except FileNotFoundError:
+                old = ""
+            else:
+                import stat
+                with os.fdopen(oldfd, "r") as oldfile:
+                    info = os.fstat(oldfile.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > 1024 * 1024:
+                        raise GuardError("Existing authorized_keys must be a small regular file.")
+                    old = oldfile.read()
+                # Append is intentionally limited to the plain public-key format
+                # used by this manager, not custom command=/environment= policies.
+                existing = [public_key(line) for line in old.splitlines()
+                            if line.strip() and not line.lstrip().startswith("#")]
+                if key in existing:
+                    return
+            key = old.rstrip() + ("\n" if old.strip() else "") + key
         fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                      0o600, dir_fd=sshfd)
         with os.fdopen(fd, "w") as stream:
@@ -226,6 +245,14 @@ class FirewallBuilder:
 
 
 class SSHBuilder:
+    @staticmethod
+    def pam_config(original):
+        """Reclaim a retained runtime on reinstall; never stack duplicate hooks."""
+        hook = "session required pam_exec.so quiet /opt/server-guard/server_guard/pam_sessions.py"
+        retained = "session required pam_exec.so quiet /usr/local/lib/server-guard-retained/pam_sessions.py"
+        lines = [line for line in original.splitlines() if line.strip() not in {hook, retained}]
+        return "\n".join(lines).rstrip() + "\n" + hook + "\n"
+
     @staticmethod
     def global_config(state):
         return f"""# Managed by server-guard. Use its CLI to change this file.

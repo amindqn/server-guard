@@ -15,7 +15,7 @@ version = __version__
 prefix = "server-guard-" + version
 output = root / "dist"
 output.mkdir(exist_ok=True)
-members = [root / "install.sh", root / "bootstrap.sh", root / "README.md"]
+members = [root / "install.sh", root / "uninstall.sh", root / "bootstrap.sh", root / "README.md"]
 for directory, suffix in [("server_guard", ".py"), ("tests", ".py"), ("docs", ".md"), ("scripts", ".py")]:
     members.extend(sorted((root / directory).glob("*" + suffix)))
 buffer = io.BytesIO()
@@ -26,7 +26,7 @@ with tarfile.open(fileobj=buffer, mode="w", format=tarfile.USTAR_FORMAT) as arch
         payload = path.read_bytes()
         entry = tarfile.TarInfo(prefix + "/" + str(path.relative_to(root)))
         entry.size = len(payload)
-        entry.mode = 0o755 if path.name in {"install.sh", "bootstrap.sh", "pam_sessions.py", "build_release.py"} else 0o644
+        entry.mode = 0o755 if path.name in {"install.sh", "uninstall.sh", "bootstrap.sh", "pam_sessions.py", "build_release.py"} else 0o644
         entry.mtime = 0
         entry.uid = entry.gid = 0
         entry.uname = entry.gname = "root"

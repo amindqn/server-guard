@@ -12,8 +12,9 @@ import sys
 from . import __version__
 from .core import Files, GuardError, Runner, V2RayBuilder, network, port, public_key, username, write_user_key
 from .host import Host
-from .services import ManagedServices, PanelManager, V2RayManager
+from .services import DB_ENGINES, ManagedServices, PanelManager, V2RayManager
 from .mongodb import MongoDBManager, app_database, mongo_name
+from .uninstall import UninstallManager
 
 
 def parser():
@@ -47,6 +48,7 @@ def parser():
             c.add_argument("count", type=int)
         if action == "key":
             c.add_argument("--key-file", required=True)
+            c.add_argument("--append", action="store_true", help="add the new key while retaining existing plain public keys")
     c = sub.add_parser("ssh")
     ss = c.add_subparsers(dest="action", required=True)
     c = ss.add_parser("port")
@@ -55,6 +57,7 @@ def parser():
     c.add_argument("sources", nargs="+")
     c = ss.add_parser("root")
     c.add_argument("mode", choices=["disable", "key-only"])
+    ss.add_parser("diagnose", help="explain this SSH transport's authentication method without changing settings")
     c = sub.add_parser("firewall")
     fs = c.add_subparsers(dest="action", required=True)
     for action in ["allow", "deny", "list"]:
@@ -72,8 +75,10 @@ def parser():
         c = ps.add_parser(action)
         c.add_argument("provider", choices=["cloudpanel", "aapanel"])
         if action == "install":
-            c.add_argument("--sha256", required=True)
-            c.add_argument("--db-engine", choices=["MYSQL_8.4", "MYSQL_8.0", "MARIADB_11.4", "MARIADB_10.11"], default="MYSQL_8.4")
+            approval = c.add_mutually_exclusive_group(required=True)
+            approval.add_argument("--sha256")
+            approval.add_argument("--official-checksum", action="store_true", help="compare CloudPanel with its official installation guide")
+            c.add_argument("--db-engine", choices=DB_ENGINES, default="MYSQL_8.4")
     c = sub.add_parser("v2ray")
     vs = c.add_subparsers(dest="action", required=True)
     c = vs.add_parser("install")
@@ -105,6 +110,11 @@ def parser():
     c = sub.add_parser("service", help="manage the optional MongoDB or V2Ray service")
     c.add_argument("name", choices=["mongodb", "v2ray"])
     c.add_argument("action", choices=["start", "stop", "restart", "status"])
+    c = sub.add_parser("uninstall", help="remove the manager while keeping access protection and application data")
+    c.add_argument("--yes", action="store_true", help="execute after reviewing the removal plan")
+    c.add_argument("--dry-run", action="store_true", help="show the removal plan without changes")
+    c.add_argument("--purge", action="store_true", help="also remove unused config; permitted only before hardening")
+    c.add_argument("--expected", help=argparse.SUPPRESS)
     sub.add_parser("firewall-load", help="reload the applied firewall (internal systemd helper)")
     sub.add_parser("v2ray-egress-load", help="reload proxy isolation (internal systemd helper)")
     return p
@@ -151,9 +161,10 @@ def user_command(h, a):
             p.write_text(key)
             h.r.run("ssh-keygen", "-l", "-f", p)
         user = pwd.getpwnam(a.name)
-        write_user_key(user.pw_dir, key, user.pw_uid, user.pw_gid)
+        write_user_key(user.pw_dir, key, user.pw_uid, user.pw_gid, append=a.append)
         h.f.path("/var/lib/server-guard/login-proof.json").unlink(missing_ok=True)
-        print("Key replaced immediately. Retest login before applying any access change.")
+        print("Key added; existing keys retained." if a.append else "Key replaced immediately.")
+        print("Test a fresh key login before applying any access change.")
     elif a.action == "disable":
         admins = [u for u, i in state["users"].items()
                   if i["role"] == "admin" and not i.get("disabled") and u != a.name]
@@ -222,6 +233,9 @@ def dispatch(h, a):
         h.status()
     elif cmd == "user":
         user_command(h, a)
+    elif cmd == "ssh" and a.action == "diagnose":
+        from .ssh_access import SSHLoginInspector
+        SSHLoginInspector(h.r).describe()
     elif cmd in {"ssh", "firewall", "web"}:
         stage(h, a)
     elif cmd == "firewall-load":
@@ -243,6 +257,15 @@ def dispatch(h, a):
             mongo.user(operation, a.name, a.database, getattr(a, "role", "readWrite"), a.admin)
     elif cmd == "service":
         ManagedServices(h).control(a.name, a.action)
+    elif cmd == "uninstall":
+        manager = UninstallManager(h)
+        plan = manager.plan(a.purge)
+        manager.describe(plan)
+        if a.dry_run:
+            return
+        if not a.yes:
+            raise GuardError("Review with uninstall --dry-run, then use uninstall --yes or the interactive menu.")
+        manager.remove(a.purge, a.expected)
     elif cmd == "audit":
         h.r.run("lynis", "audit", "system", "--quick", capture=False)
     elif cmd == "update":
@@ -257,7 +280,7 @@ def dispatch(h, a):
         elif a.action == "download":
             panel.download(a.provider)
         else:
-            panel.install(a.provider, a.sha256, a.db_engine)
+            panel.install(a.provider, a.sha256, a.db_engine, a.official_checksum)
     elif cmd == "v2ray":
         v = V2RayManager(h)
         if a.action == "install":
@@ -298,6 +321,18 @@ def menu(h, setup=False):
         return
 
 
+def interactive_uninstall(h, a):
+    """Review without holding the management lock, then revalidate under it."""
+    manager = UninstallManager(h)
+    plan = manager.plan(a.purge)
+    manager.describe(plan)
+    if input("Type UNINSTALL to remove the manager (Enter cancels): ").strip() != "UNINSTALL":
+        print("Uninstall cancelled. Nothing removed.")
+        return
+    a.yes, a.expected = True, plan["fingerprint"]
+    execute_locked(h, a)
+
+
 def main():
     os.umask(0o077)
     p = parser()
@@ -317,6 +352,10 @@ def main():
             # These systemd helpers are invoked synchronously by locked commands.
             # They replace only an owned table in a single nft transaction.
             dispatch(h, a)
+        elif a.command == "uninstall" and not a.yes and not a.dry_run:
+            if not sys.stdin.isatty():
+                raise GuardError("Use uninstall --dry-run to review or uninstall --yes for a noninteractive removal.")
+            interactive_uninstall(h, a)
         elif a.command in {"menu", "setup"}:
             menu(h, setup=a.command == "setup")
         else:

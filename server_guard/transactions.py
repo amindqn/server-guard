@@ -148,17 +148,5 @@ WantedBy=timers.target
 
 
 def verified_login(runner):
-    """Require this SSH transport's accepted-publickey journal entry and sudo identity."""
-    user = os.environ.get("SUDO_USER", "")
-    conn = os.environ.get("SSH_CONNECTION", "").split()
-    if not user or user == "root" or len(conn) != 4:
-        raise GuardError("Run this with sudo from a NEW, non-root SSH key login; preserve SSH_CONNECTION.")
-    result = runner.run("journalctl", "-u", "ssh", "-u", "sshd", "--since", "-1 hour",
-                        "-o", "json", "--no-pager")
-    marker = f"Accepted publickey for {user} from {conn[0]} port {conn[1]} "
-    for line in reversed(result.stdout.splitlines()):
-        row = json.loads(line)
-        if marker in row.get("MESSAGE", ""):
-            return {"user": user, "connection": conn,
-                    "time": int(row["__REALTIME_TIMESTAMP"]) / 1_000_000}
-    raise GuardError("Could not verify public-key login for this SSH connection in the SSH journal.")
+    from .ssh_access import SSHLoginInspector
+    return SSHLoginInspector(runner).verified()

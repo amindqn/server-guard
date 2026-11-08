@@ -112,6 +112,25 @@ class TerminalWorkflowTests(unittest.TestCase):
                 app.ssh_port()
             self.assertEqual(calls, [])
 
+    def test_panel_install_opens_setup_before_download_when_baseline_missing(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, output = self.fixture(root, [])
+            with patch.object(app, "setup") as setup:
+                app.install_panel("cloudpanel")
+            setup.assert_called_once_with()
+            self.assertEqual(calls, [])
+            self.assertIn("Complete and confirm the SSH/firewall setup", output.getvalue())
+
+    def test_panel_install_opens_recovery_before_download_when_change_pending(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, [])
+            app.h.f.write("/etc/server-guard/firewall.nft", "# applied but not yet confirmed\n")
+            app.h.f.write("/var/lib/server-guard/pending.json", '{"id":"pending-change"}')
+            with patch.object(app, "setup") as setup:
+                app.install_panel("aapanel")
+            setup.assert_called_once_with()
+            self.assertEqual(calls, [])
+
     def test_ctrl_c_at_top_level_exits_without_commands(self):
         with tempfile.TemporaryDirectory() as root:
             app, calls, _ = self.fixture(root, [])
@@ -146,9 +165,40 @@ class TerminalWorkflowTests(unittest.TestCase):
             app.v2ray_client("export")
             self.assertEqual(calls, [])
 
+    def test_cloudpanel_defaults_to_publisher_check_and_numbered_database(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, ["n", "", "", "y"])
+            app.h.f.write("/etc/server-guard/firewall.nft", "# confirmed\n")
+            app.install_panel("cloudpanel")
+            self.assertEqual(calls, [["panel", "install", "cloudpanel", "--official-checksum", "--db-engine", "MYSQL_8.4"]])
+
+    def test_add_key_defaults_to_retaining_existing_keys(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, ["", test_key(), "y"])
+            app.user_key("admin")
+            self.assertEqual(calls[0][:3], ["user", "key", "admin"])
+            self.assertIn("--append", calls[0])
+
+    def test_uninstall_cancel_keeps_menu_and_submits_nothing(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, ["n"])
+            with patch("server_guard.uninstall.UninstallManager.describe"):
+                app.uninstall_menu()
+            self.assertEqual(calls, [])
+            self.assertFalse(app.exit_requested)
+
+    def test_grouped_navigation_keeps_accounts_apps_recovery_and_uninstall_reachable(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, output = self.fixture(root, ["2", "3", "0", "4", "0", "7", "0", "0"])
+            app.run()
+            for text in ["Accounts and login access", "KEY PASSPHRASE", "SERVER ACCOUNT PASSWORD",
+                         "Applications and databases", "Access changes", "Uninstall Server Guard"]:
+                self.assertIn(text, output.getvalue())
+            self.assertEqual(calls, [])
+
     def test_first_root_setup_pauses_before_access_hardening(self):
         with tempfile.TemporaryDirectory() as root:
-            answers = ["y", "22", "y", "admin", "3", test_key(), "y"]
+            answers = ["y", "22", "y", "1", "admin", "3", test_key(), "y"]
             app, calls, output = self.fixture(root, answers, initialized=False)
             with patch.dict(os.environ, {"SSH_CONNECTION": "192.0.2.1 50000 203.0.113.1 22"}, clear=True):
                 SetupWizard(app).run()
