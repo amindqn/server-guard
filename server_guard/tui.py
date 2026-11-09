@@ -7,6 +7,7 @@ from pathlib import Path
 import shlex
 import shutil
 import sys
+import subprocess
 import tempfile
 import textwrap
 
@@ -15,6 +16,8 @@ from .core import GuardError, POLICY, domain, network, port, public_key, usernam
 from .mongodb import app_database, mongo_name
 from .services import DB_ENGINES, checksum
 from .ssh_access import client_command
+from .health import DEFAULT_THRESHOLDS
+from .maintenance import APPLICATION_UNITS, absolute_path
 
 
 class Cancelled(Exception):
@@ -156,7 +159,7 @@ class TerminalApp:
                 action()
             except (Cancelled, KeyboardInterrupt):
                 self.c.say("Cancelled. Completed commands were retained.", "note")
-            except (GuardError, OSError, ValueError, KeyError) as exc:
+            except (GuardError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
                 self.c.say(f"Error: {exc}", "error")
 
     def policy(self):
@@ -183,7 +186,7 @@ class TerminalApp:
                  MenuItem("3", "Firewall and website access", self.firewall_menu),
                  MenuItem("4", "Applications: web panel and MongoDB", self.applications_menu),
                  MenuItem("5", "V2Ray and client connections", self.v2ray_menu),
-                 MenuItem("6", "System health, updates and audit", self.maintenance_menu),
+                 MenuItem("6", "Server health, monitoring and maintenance", self.maintenance_menu),
                  MenuItem("7", "Review changes, confirm or recover", self.access_menu),
                  MenuItem("8", "Uninstall Server Guard", self.uninstall_menu)]
         while not self.exit_requested:
@@ -197,7 +200,7 @@ class TerminalApp:
                 return
             except Cancelled:
                 self.c.say("Cancelled. Returning to the management menu.", "note")
-            except (GuardError, OSError, ValueError, KeyError) as exc:
+            except (GuardError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
                 self.c.say(f"Error: {exc}", "error")
 
     def accounts_menu(self):
@@ -531,13 +534,81 @@ class TerminalApp:
             self.operation("v2ray", action, name)
 
     def maintenance_menu(self):
-        self.page("Status and maintenance", [
+        self.page("Server health and maintenance", [
+            MenuItem("1", "Check server now (progress + security/resource findings)", lambda: self.run_command("health", "check")),
+            MenuItem("2", "Live CPU, RAM, disk and network monitor", self.live_health),
+            MenuItem("3", "Latest saved health report", lambda: self.run_command("health", "show")),
+            MenuItem("4", "Health history and trends", lambda: self.run_command("health", "history")),
+            MenuItem("5", "Storage explorer and reviewed cleanup", self.storage_menu),
+            MenuItem("6", "Application CPU scheduling priority", self.cpu_priority),
+            MenuItem("7", "Scheduled checks and warning thresholds", self.monitor_menu),
+            MenuItem("8", "Security details, audits and updates", self.security_maintenance)],
+            "Checks report actual evidence; UNKNOWN means it could not be verified. No cleanup, process killing or tuning runs automatically.")
+
+    def security_maintenance(self):
+        self.page("Security details and package maintenance", [
             MenuItem("1", "Listening ports and security service status", lambda: self.run_command("status")),
             MenuItem("2", "Run Lynis security audit", lambda: self.run_command("audit")),
             MenuItem("3", "Install / repair base dependencies", lambda: self.operation("prepare")),
             MenuItem("4", "Review and install package updates", lambda: self.operation("update")),
             MenuItem("5", "Diagnose this SSH connection", lambda: self.run_command("ssh", "diagnose")),
             MenuItem("6", "SSH key help", self.key_help)])
+
+    def live_health(self):
+        seconds = self.c.ask("Refresh interval in seconds (Ctrl+C returns here)", 5, bounded_number(2, 60))
+        self.run_command("health", "watch", "--interval", seconds)
+
+    def storage_menu(self):
+        self.page("Storage explorer and cleanup", [
+            MenuItem("1", "Find large files (read-only inventory)", self.storage_scan),
+            MenuItem("2", "Review / delete ONE file from an inventory", self.storage_delete),
+            MenuItem("3", "Clean downloaded APT package archives", lambda: self.operation("health", "cleanup", "apt-cache", "--yes", prompt="Remove package archives (installed packages remain)?")),
+            MenuItem("4", "Remove old archived system journals", self.journal_cleanup)],
+            "Review disk and inode findings first. No automatic database cleanup, recursive deletion or active-log truncation.")
+
+    def storage_scan(self):
+        path = self.c.ask("Directory to inspect (one filesystem)", "/var", absolute_path)
+        minimum = self.c.ask("Minimum logical file size in MiB", 100, bounded_number(1, 1048576))
+        self.run_command("health", "files", path, "--min-mib", minimum)
+
+    def storage_delete(self):
+        scan = self.c.ask("Storage scan ID")
+        item = self.c.ask("Item number from that scan", validate=bounded_number(1, 100))
+        self.run_command("health", "delete", scan, item)
+        self.c.say("Deletion is permanent; SSH rollback cannot restore the selected file. Review its contents/backup first.", "note")
+        self.operation("health", "delete", scan, item, "--yes", prompt="Permanently delete this exact reviewed file?")
+
+    def journal_cleanup(self):
+        days = self.c.ask("Keep at least this many days of journal history", 14, bounded_number(7, 3650))
+        self.c.say("Older archived journals contain historical security/diagnostic evidence. Active journals may keep extra space.", "note")
+        self.operation("health", "cleanup", "journal", "--days", days, "--yes", prompt="Permanently remove older archived journal files?")
+
+    def cpu_priority(self):
+        service = self.c.options("Application service", [(key, key) for key in APPLICATION_UNITS], "v2ray")
+        mode = self.c.options("Runtime CPU scheduling", [("Lower priority under CPU contention", "lower"),
+            ("Choose a CPU weight", "custom"), ("Restore value recorded before this tool changed it", "reset")], "lower")
+        self.c.say("Weights share CPU when workloads compete; they do not create more CPU capacity. No service restart is needed. Changes expire at reboot.")
+        args = ["health", "cpu-weight", service]
+        if mode == "reset":
+            args += ["--reset"]
+        else:
+            weight = 25 if mode == "lower" else self.c.ask("CPU weight (normal baseline is usually 100)", 100, bounded_number(1, 10000))
+            args += ["--weight", weight]
+        self.operation(*args, "--yes", prompt="Apply this runtime application CPU scheduling change?")
+
+    def monitor_menu(self):
+        self.page("Scheduled health checks", [
+            MenuItem("1", "Enable / configure local monitoring", self.monitor_enable),
+            MenuItem("2", "Scheduler and last-run service status", lambda: self.run_command("health", "monitor", "status")),
+            MenuItem("3", "Disable scheduled checks (keep reports)", lambda: self.operation("health", "monitor", "disable", "--yes"))],
+            "Stores up to 200 private reports locally. No public port, cloud service, email or automatic remediation.")
+
+    def monitor_enable(self):
+        minutes = self.c.ask("Minutes between completed checks", 5, bounded_number(1, 1440))
+        args = ["health", "monitor", "enable", "--minutes", minutes]
+        for key, value in DEFAULT_THRESHOLDS.items():
+            args += ["--" + key, self.c.ask(key.capitalize() + " warning threshold (%)", value, bounded_number(50, 99))]
+        self.operation(*args, "--yes", prompt="Enable periodic local checks with these warning thresholds?")
 
 
 class SetupWizard:

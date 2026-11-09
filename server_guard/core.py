@@ -110,10 +110,10 @@ def validate(state):
 
 class Runner:
     """Adapter: no shell evaluation and a fixed, root-owned executable search path."""
-    def run(self, *args, check=True, input=None, capture=True):
+    def run(self, *args, check=True, input=None, capture=True, timeout=None):
         env = dict(os.environ, PATH="/usr/sbin:/usr/bin:/sbin:/bin", LC_ALL="C")
         result = subprocess.run([str(x) for x in args], input=input, text=True,
-                                capture_output=capture, env=env, check=False)
+                                capture_output=capture, env=env, check=False, timeout=timeout)
         if check and result.returncode:
             raise GuardError(f"Command failed: {args[0]} {args[1] if len(args) > 1 else ''}\n"
                              f"{(result.stderr or '')[-3000:]}")

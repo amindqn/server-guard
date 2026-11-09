@@ -27,7 +27,7 @@ Run `sudo server-guard` or `sudo server-guard menu`:
 
 ```text
 ==============================================================================
-SERVER GUARD 1.3.0  /  Management
+SERVER GUARD 1.4.0  /  Management
 ==============================================================================
 Policy: SSH 22 | root SSH disabled | 1 users | firewall config saved.
    1  Setup assistant / next step
@@ -35,7 +35,7 @@ Policy: SSH 22 | root SSH disabled | 1 users | firewall config saved.
    3  Firewall and website access
    4  Applications: web panel and MongoDB
    5  V2Ray and client connections
-   6  System health, updates and audit
+   6  Server health, monitoring and maintenance
    7  Review changes, confirm or recover
    8  Uninstall Server Guard
    0  Exit
@@ -51,11 +51,13 @@ The summary describes the saved policy/files, not proof that every running servi
 | Applications → Panel | Download/review; verify CloudPanel against its official guide or manually approve a SHA-256; choose a numbered DB engine; install; show private tunnel access |
 | Applications → MongoDB | Install locally, bootstrap/recover the admin, create/rotate/revoke scoped app users, inspect/start/restart/stop |
 | V2Ray | Install a pinned binary, configure domain/local WS port, add/export/revoke clients, show Nginx block, inspect/start/restart/stop |
-| Maintenance | Status, Lynis audit, repair dependencies, review package upgrades |
+| Health and maintenance | Progress checks, live CPU/RAM/storage/network/process view, saved results/history, storage explorer and reviewed cleanup, runtime CPU scheduling, scheduled monitoring, existing status/audit/update/SSH-help submenu |
 | Access changes | Plan, apply, confirm pending ID from a new login, roll back |
 | Uninstall | Review removal scope, create a private backup and remove the manager while preserving working protection/apps/data |
 
 Optional service controls operate only on MongoDB and V2Ray. They cannot stop SSH or the firewall through this interface. Starting MongoDB requires successful first-user bootstrap. New port/session/SSH policies remain staged until apply; database/client/account/key/package operations retain their documented immediate behavior.
+
+The health section offers a **13-step check** with per-probe progress, live viewing (Ctrl+C returns), timestamped saved results and history. WARN/CRITICAL findings suggest a next action; UNKNOWN states identify missing evidence. Storage inventory is read-only; selecting a scan item previews its exact path before deletion confirmation. Cleanup and CPU scheduling forms explain impact before submitting a command. Scheduled local monitoring is optional and collects its interval/thresholds before confirmation. All mutation confirmations default to No; pending access changes block cleanup/tuning/scheduler mutations, while checks and live monitoring remain available. See [HEALTH.md](HEALTH.md) for commands, supported paths/services, retention and limitations.
 
 Selecting a panel before applying/confirming the SSH/firewall baseline opens Guided setup immediately, before a vendor download or checksum prompt. Finish the administrator key-login test, apply the reviewed plan, reconnect and confirm its printed change ID; then return to the panel menu. The CLI installer also enforces this prerequisite. A previously downloaded installer can be reused after confirmation.
 

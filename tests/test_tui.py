@@ -165,6 +165,33 @@ class TerminalWorkflowTests(unittest.TestCase):
             app.v2ray_client("export")
             self.assertEqual(calls, [])
 
+    def test_health_submenus_keep_audits_and_cleanup_reachable(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, output = self.fixture(root, ["6", "5", "0", "7", "0", "8", "0", "0", "0"])
+            app.run()
+            for label in ["Server health and maintenance", "Storage explorer and cleanup", "Scheduled health checks", "Security details and package maintenance"]:
+                self.assertIn(label, output.getvalue())
+            self.assertEqual(calls, [])
+
+    def test_file_removal_requires_preview_then_separate_confirmation(self):
+        with tempfile.TemporaryDirectory() as root:
+            scan_id = "a" * 32
+            app, calls, _ = self.fixture(root, [scan_id, "2", "n"])
+            app.storage_delete()
+            self.assertEqual(calls, [["health", "delete", scan_id, "2"]])
+
+    def test_cpu_scheduling_form_changes_only_selected_application(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, ["", "", "y"])
+            app.cpu_priority()
+            self.assertEqual(calls, [["health", "cpu-weight", "v2ray", "--weight", "25", "--yes"]])
+
+    def test_scheduled_monitor_defaults_have_review_before_submission(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, ["", "", "", "", "", "y"])
+            app.monitor_enable()
+            self.assertEqual(calls, [["health", "monitor", "enable", "--minutes", "5", "--cpu", "90", "--memory", "90", "--disk", "85", "--inodes", "85", "--yes"]])
+
     def test_cloudpanel_defaults_to_publisher_check_and_numbered_database(self):
         with tempfile.TemporaryDirectory() as root:
             app, calls, _ = self.fixture(root, ["n", "", "", "y"])

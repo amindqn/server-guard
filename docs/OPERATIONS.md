@@ -117,6 +117,8 @@ The domain/path/client IDs survive configure; pass `--local-port` again if using
 
 ## Maintenance, backups and monitoring
 
+Menu **6 Server health, monitoring and maintenance** includes progress checks, live resource viewing, saved local reports and optional scheduled checks, plus reviewed storage cleanup and reversible application CPU scheduling. Start with `sudo server-guard health check`; see [HEALTH.md](HEALTH.md) for the full workflow. Existing detailed status, Lynis, package updates and SSH help are under its Security details submenu. Monitoring does not automatically delete files, restart workloads or send external alerts. The uninstaller stops/removes its timer/service before deleting the manager.
+
 For the optional MongoDB service, use the README's `mongodb install` and `mongodb bootstrap` sequence **after** panel installation. It is managed independently of the panel. `mongodb status` shows initialization state and systemd status; `mongodb shell --admin NAME` prompts for administrator authentication. App identities live in their named database, so their URI uses that database as `authSource`.
 
 The terminal UI also controls optional service lifecycle through `server-guard service mongodb start|stop|restart|status` and `server-guard service v2ray start|stop|restart|status`. Choose one action rather than typing the `|` notation. Start/restart checks service readiness; MongoDB must be bootstrapped first. Service mutations refuse a pending SSH/firewall change. Stopping a service interrupts its applications/proxy connections; it does not uninstall its data, configuration or enabled-at-boot setting.

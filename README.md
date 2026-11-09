@@ -57,6 +57,19 @@ The default panel recommendation is **CloudPanel**, because it supports static/f
 
 Read [the research and tradeoffs](docs/RESEARCH.md), [ongoing operations](docs/OPERATIONS.md), and [the Ubuntu validation checklist](docs/VALIDATION.md).
 
+## Server checks, monitoring and cleanup
+
+Open menu **6 Server health, monitoring and maintenance** for a progress check, live CPU/RAM/storage/network view, saved results, storage explorer, reviewed cleanup and application CPU scheduling. Existing audits, updates and security-service status are inside that menu.
+
+```bash
+sudo server-guard health check
+sudo server-guard health watch --interval 5
+sudo server-guard health history
+sudo server-guard health files /var --min-mib 100
+```
+
+Findings include security controls, CPU/load/steal/I/O pressure, available RAM/swap, disks/inodes, busy processes, listeners, failed services, package-upgrade and reboot state. Reports distinguish warnings from unknown evidence and suggest a next step. Optional scheduled checks keep up to 200 private local reports; no public port or external account is required. Large-file deletion, APT-cache/journal cleanup and reversible runtime CPU scheduling require explicit review/confirmation. CPU priority shares existing capacity; it is not a universal speedup. [Commands, thresholds and maintenance details](docs/HEALTH.md).
+
 ## What it does
 
 - Creates administrators with password-protected sudo, ordinary developers without sudo, and chrooted SFTP-only accounts.
@@ -115,13 +128,13 @@ scp -r /PATH/TO/server-config root@SERVER_IP:/root/server-config
 
 Use `scp -P CURRENT_SSH_PORT` if the current port is not 22. Replace placeholders and paths with real values. Alternatively, copy and extract the supplied release archive on the server.
 
-For the archive, copy `server-guard-1.3.0.tar.gz` and its `.sha256` file to `/root`, then on the server run:
+For the archive, copy `server-guard-1.4.0.tar.gz` and its `.sha256` file to `/root`, then on the server run:
 
 ```bash
 cd /root
-sha256sum -c server-guard-1.3.0.tar.gz.sha256
-tar -xzf server-guard-1.3.0.tar.gz
-cd /root/server-guard-1.3.0
+sha256sum -c server-guard-1.4.0.tar.gz.sha256
+tar -xzf server-guard-1.4.0.tar.gz
+cd /root/server-guard-1.4.0
 ```
 
 Use this extracted directory in place of `/root/server-config` below. The adjacent checksum detects transfer damage; obtain the archive/checksum through a trusted channel.

@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import pwd
 import sys
+import time
+import subprocess
 
 from . import __version__
 from .core import Files, GuardError, Runner, V2RayBuilder, network, port, public_key, username, write_user_key
@@ -15,6 +17,8 @@ from .host import Host
 from .services import DB_ENGINES, ManagedServices, PanelManager, V2RayManager
 from .mongodb import MongoDBManager, app_database, mongo_name
 from .uninstall import UninstallManager
+from .health import DEFAULT_THRESHOLDS, HealthChecker, HealthMonitor, HealthView, ReportStore, utc
+from .maintenance import APPLICATION_UNITS, MaintenanceActions, StorageManager, absolute_path
 
 
 def parser():
@@ -115,6 +119,43 @@ def parser():
     c.add_argument("--dry-run", action="store_true", help="show the removal plan without changes")
     c.add_argument("--purge", action="store_true", help="also remove unused config; permitted only before hardening")
     c.add_argument("--expected", help=argparse.SUPPRESS)
+    c = sub.add_parser("health", help="progress checks, live/local monitoring, reviewed cleanup and CPU scheduling")
+    hs = c.add_subparsers(dest="action", required=True)
+    c = hs.add_parser("check", help="sample server resources and inspect security controls")
+    c.add_argument("--json", action="store_true")
+    c.add_argument("--record", action="store_true", help="save report (also the default)")
+    c.add_argument("--no-record", action="store_true")
+    c = hs.add_parser("watch", help="live resources; full security check in the first frame")
+    c.add_argument("--interval", type=int, default=5)
+    c.add_argument("--count", type=int, default=0, help="0 keeps watching until Ctrl+C")
+    c = hs.add_parser("show", help="show the latest saved report")
+    c.add_argument("--json", action="store_true")
+    c = hs.add_parser("history", help="recent local results and resource trends")
+    c.add_argument("--limit", type=int, default=20)
+    c = hs.add_parser("files", help="bounded large-file inventory; never deletes")
+    c.add_argument("path", nargs="?", default="/var", type=absolute_path)
+    c.add_argument("--min-mib", type=int, default=100)
+    c.add_argument("--limit", type=int, default=20)
+    c = hs.add_parser("delete", help="review one inventory item; --yes permanently deletes it")
+    c.add_argument("scan_id")
+    c.add_argument("item", type=int)
+    c.add_argument("--yes", action="store_true")
+    c = hs.add_parser("cleanup", help="preview named cache/log cleanup; --yes executes it")
+    c.add_argument("target", choices=["apt-cache", "journal"])
+    c.add_argument("--days", type=int, default=14)
+    c.add_argument("--yes", action="store_true")
+    c = hs.add_parser("cpu-weight", help="reversible runtime scheduling priority for application services")
+    c.add_argument("service", choices=sorted(APPLICATION_UNITS))
+    group = c.add_mutually_exclusive_group(required=True)
+    group.add_argument("--weight", type=int)
+    group.add_argument("--reset", action="store_true")
+    c.add_argument("--yes", action="store_true")
+    c = hs.add_parser("monitor", help="configure periodic local health reports; no automatic fixes")
+    c.add_argument("mode", choices=["enable", "disable", "status"])
+    c.add_argument("--minutes", type=int, default=5)
+    for key, value in DEFAULT_THRESHOLDS.items():
+        c.add_argument("--" + key, type=int, default=value)
+    c.add_argument("--yes", action="store_true")
     sub.add_parser("firewall-load", help="reload the applied firewall (internal systemd helper)")
     sub.add_parser("v2ray-egress-load", help="reload proxy isolation (internal systemd helper)")
     return p
@@ -231,6 +272,8 @@ def dispatch(h, a):
         h.tx.rollback()
     elif cmd == "status":
         h.status()
+    elif cmd == "health":
+        health_command(h, a)
     elif cmd == "user":
         user_command(h, a)
     elif cmd == "ssh" and a.action == "diagnose":
@@ -300,9 +343,75 @@ def dispatch(h, a):
             print(V2RayBuilder.nginx(state))
 
 
+def health_command(h, a):
+    store = ReportStore(h.f)
+    if a.action == "check":
+        report = HealthChecker(h).check(lambda i, n, label: print(f"[{i}/{n}] {label}", file=sys.stderr, flush=True))
+        if not a.no_record:
+            store.save(report)
+        print(json.dumps(report, indent=2)) if a.json else HealthView.show(report)
+    elif a.action == "watch":
+        if not 2 <= a.interval <= 3600 or not 0 <= a.count <= 10000:
+            raise GuardError("Watch interval must be 2..3600 seconds; count 0..10000 (0 = until Ctrl+C).")
+        print("Live health: Ctrl+C returns to the menu. First frame includes security; later frames show current resources. Reports are retained locally.")
+        frame = 0
+        try:
+            while a.count == 0 or frame < a.count:
+                started = time.monotonic()
+                report = HealthChecker(h).check(security=frame == 0)
+                store.save(report)
+                HealthView.show(report)
+                frame += 1
+                if a.count and frame >= a.count:
+                    break
+                time.sleep(max(0, a.interval - (time.monotonic() - started)))
+        except KeyboardInterrupt:
+            print("Live monitoring stopped. Saved results retained.")
+    elif a.action == "show":
+        report = store.latest()
+        print(json.dumps(report, indent=2)) if a.json else HealthView.show(report)
+    elif a.action == "history":
+        if not 1 <= a.limit <= 200:
+            raise GuardError("History limit must be 1..200.")
+        reports = store.history(a.limit)
+        if not reports:
+            raise GuardError("No health history yet. Run health check.")
+        print("UTC time | result | CPU% | RAM% | highest disk% | WARN/CRITICAL/UNKNOWN | scope")
+        for report in reports:
+            r = report["metrics"].get("resources", {})
+            disks = [d["percent"] for d in report["metrics"].get("disks", []) if "percent" in d]
+            counts = report["counts"]
+            print(f"{utc(report['time'])} | {report['status']} | {r.get('cpu_percent', '?')} | {r.get('memory_percent', '?')} | {max(disks) if disks else '?'} | {counts.get('WARN', 0)}/{counts.get('CRITICAL', 0)}/{counts.get('UNKNOWN', 0)} | {report['scope']}")
+    elif a.action == "files":
+        storage = StorageManager(h)
+        print(f"Scanning {a.path}: one filesystem, up to 100000 entries/30 seconds; no files will be deleted.", flush=True)
+        report = storage.scan(a.path, a.min_mib, a.limit, lambda n, seconds: print(f"[scan] {n} entries checked, {seconds:.1f}s elapsed", flush=True))
+        storage.show(report)
+    elif a.action == "delete":
+        StorageManager(h).delete(a.scan_id, a.item, a.yes)
+    elif a.action == "cleanup":
+        MaintenanceActions(h).cleanup(a.target, a.days, a.yes)
+    elif a.action == "cpu-weight":
+        MaintenanceActions(h).cpu_weight(a.service, a.weight, a.reset, a.yes)
+    elif a.action == "monitor":
+        monitor = HealthMonitor(h)
+        if a.mode == "status":
+            monitor.status()
+        elif not a.yes:
+            print(f"Preview: {a.mode} scheduled local health reports; interval {a.minutes} minutes. Use --yes to change the scheduler. No automatic cleanup or external alerts.")
+        elif a.mode == "enable":
+            monitor.enable(a.minutes, {key: getattr(a, key) for key in DEFAULT_THRESHOLDS})
+        else:
+            monitor.disable()
+
+
 def execute_locked(h, args):
     """Command adapter shared by CLI and terminal UI; lock only submitted work."""
     parsed = parser().parse_args(args) if isinstance(args, list) else args
+    if parsed.command == "health" and (parsed.action in {"check", "watch", "show", "history", "files"} or not getattr(parsed, "yes", False)):
+        # Probes, filesystem scans and live-view sleeps must not stall rollback.
+        dispatch(h, parsed)
+        return
     with h.f.path("/run/server-guard/management.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         dispatch(h, parsed)
@@ -361,7 +470,7 @@ def main():
         else:
             execute_locked(h, a)
         return 0
-    except (GuardError, OSError, ValueError, KeyError) as exc:
+    except (GuardError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
