@@ -68,6 +68,10 @@ The standalone `bootstrap.sh` accepts an explicit public repository and branch/t
 
 The design follows single responsibilities and avoids shell interpolation: `Runner` and `Files` adapt operating-system operations; builders generate validated configs; `PolicyStore` centralizes persistent state; `Transactions` implements a memento-style recovery boundary; panel installer strategies share a common verification workflow; `Host` coordinates them as a facade. Patterns are used where they clarify responsibility, without adding unnecessary singleton/global-service machinery.
 
+### Configuration-preserving manager updates (1.5.0)
+
+`GitHubSource` owns source identity and bounded archive inspection. `UpdateManager` separates network/check operations from installation. `ToolInstaller` is a publication facade with stage/validate/snapshot/activate/recover phases. Installed files use complete immutable release directories; the launcher resolves the active link once so later imports cannot mix release versions. The old standalone PAM helper location remains supported. Publication uses the existing access-management lock and refuses pending changes; network I/O never holds that lock. The bootstrap invokes the candidate installer directly, so an older installation needs no update command to enter this path. This is an implementation design and local-fixture evidence, not a claim of verified live Ubuntu upgrade behavior.
+
 ## Quick start and terminal setup (1.2.0)
 
 The requested [3x-ui quick-start reference](https://github.com/MHSanaei/3x-ui#quick-start) documents a short remote installer followed by a reusable terminal management command. Server Guard now follows that interaction pattern: a root-shell one-liner invokes the GitHub bootstrap, which opens a resumable setup wizard; `server-guard` opens grouped management menus afterward. `--no-ui` and absent terminals retain headless installation behavior.

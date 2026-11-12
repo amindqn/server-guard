@@ -27,6 +27,21 @@ class RuntimeRunner:
 
 
 class UninstallTests(unittest.TestCase):
+    def test_uninstall_after_versioned_update_detaches_runtime_and_preserves_data(self):
+        from server_guard.installation import ToolInstaller
+        with tempfile.TemporaryDirectory() as root:
+            host, manager = self.fixture(root, applied=True)
+            host.f.write(PROGRAM + "/server_guard/__init__.py", '__version__="1.4.0"\n')
+            with contextlib.redirect_stdout(io.StringIO()):
+                ToolInstaller(host.f.root).install(Path(__file__).resolve().parents[1], upgrade_only=True)
+            self.assertTrue(host.f.path(PROGRAM + "/current").is_symlink())
+            backup = self.remove(manager)
+            self.assertFalse(host.f.path(PROGRAM).exists())
+            self.assertTrue(host.f.path(RETAINED + "/pam_sessions.py").is_file())
+            self.assertTrue(host.f.path("/var/lib/mongodb/important.data").is_file())
+            self.assertTrue(host.f.path("/home/admin/.ssh/authorized_keys").is_file())
+            self.assertTrue((backup / "opt/server-guard/current").is_symlink())
+
     def fixture(self, root, applied=False):
         host = Host(Files(root), RuntimeRunner())
         f = host.f

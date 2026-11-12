@@ -9,6 +9,8 @@ server_guard_bootstrap_main() {
   task_sha256=''
   task_ui=1
   task_uninstall=0
+  task_upgrade=0
+  task_downgrade=0
   task_uninstall_args=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -22,15 +24,21 @@ server_guard_bootstrap_main() {
         shift 2 ;;
       --no-ui) task_ui=0; shift ;;
       --uninstall) task_uninstall=1; shift ;;
+      --upgrade-only) task_upgrade=1; task_ui=0; shift ;;
+      --allow-downgrade) task_downgrade=1; shift ;;
       --yes|--dry-run|--purge) task_uninstall_args+=("$1"); shift ;;
       -h|--help)
-        echo 'Usage: sudo bash bootstrap.sh [--repo OWNER/REPO] [--ref BRANCH|TAG|COMMIT] [--sha256 SOURCE_ARCHIVE_SHA256] [--no-ui] [--uninstall [--dry-run|--yes] [--purge]]'
+        echo 'Usage: sudo bash bootstrap.sh [--repo OWNER/REPO] [--ref BRANCH|TAG|COMMIT] [--sha256 SOURCE_ARCHIVE_SHA256] [--no-ui] [--upgrade-only] [--allow-downgrade] [--uninstall [--dry-run|--yes] [--purge]]'
         echo 'Default repository: amindqn/server-guard (master branch).'
         echo 'Installs the tool and opens guided setup in a terminal. --no-ui skips interactive setup.'
+        echo '--upgrade-only updates an existing manager without setup, including versions without self-update.'
         return 0 ;;
       *) echo "Unknown option: $1" >&2; return 1 ;;
     esac
   done
+  if [[ $task_uninstall == 1 && ( $task_upgrade == 1 || $task_downgrade == 1 ) ]]; then
+    echo 'Do not combine uninstall and upgrade options.' >&2; return 1
+  fi
   if [[ $task_uninstall == 0 && ${#task_uninstall_args[@]} -gt 0 ]]; then
     echo '--yes, --dry-run and --purge require --uninstall.' >&2; return 1
   fi
@@ -53,9 +61,12 @@ server_guard_bootstrap_main() {
   if [[ -f /var/lib/server-guard/pending.json ]]; then
     echo 'Confirm or roll back the pending access change before updating or uninstalling the tool.' >&2; return 1
   fi
+  if [[ $task_upgrade == 1 && ( ! -f /usr/local/sbin/server-guard || ! -d /opt/server-guard ) ]]; then
+    echo 'No installed manager found. Use the normal installer for a first installation.' >&2; return 1
+  fi
   if ! command -v curl >/dev/null || ! command -v python3 >/dev/null; then
-    if [[ $task_uninstall == 1 ]]; then
-      echo 'Uninstall requires curl and python3; no packages were installed.' >&2; return 1
+    if [[ $task_uninstall == 1 || $task_upgrade == 1 ]]; then
+      echo 'This operation requires curl and python3; no packages were installed.' >&2; return 1
     fi
     apt-get update
     apt-get install -y ca-certificates curl python3
@@ -79,13 +90,11 @@ import tarfile
 
 archive, destination = sys.argv[1], Path(sys.argv[2])
 with tarfile.open(archive, 'r:gz') as source:
-    members = source.getmembers()
-    if not members or len(members) > 4000:
-        raise SystemExit('Unexpected GitHub archive member count.')
+    members = []
     top = set()
     size = 0
     seen = set()
-    for item in members:
+    for item in source:
         name = PurePosixPath(item.name)
         if (name.is_absolute() or '..' in name.parts or not name.parts
                 or '\\' in item.name or not (item.isfile() or item.isdir())):
@@ -93,9 +102,10 @@ with tarfile.open(archive, 'r:gz') as source:
         if name in seen:
             raise SystemExit('Duplicate GitHub archive entry.')
         seen.add(name)
+        members.append(item)
         top.add(name.parts[0])
         size += item.size
-        if size > 67108864:
+        if len(members) > 4000 or size > 67108864:
             raise SystemExit('GitHub source archive is unexpectedly large.')
     if len(top) != 1:
         raise SystemExit('Expected a single GitHub source directory.')
@@ -117,23 +127,25 @@ PY
     fi
     return
   fi
-  bash "$task_install_dir/install.sh"
-  python3 -I - "$task_repo" "$task_ref" "$task_actual_sha256" <<'PY'
-import json
-from pathlib import Path
-import sys
-Path('/opt/server-guard/source.json').write_text(json.dumps({
-    'repository': sys.argv[1], 'ref': sys.argv[2], 'archive_sha256': sys.argv[3]
-}, indent=2) + '\n')
-PY
+  if [[ ! -f "$task_install_dir/scripts/install_tool.py" ]]; then
+    echo 'Selected source predates the safe installer. Choose a release with scripts/install_tool.py.' >&2; return 1
+  fi
+  task_install_args=(--repo "$task_repo" --ref "$task_ref" --archive-sha256 "$task_actual_sha256")
+  if [[ $task_upgrade == 1 ]]; then task_install_args+=(--upgrade-only); fi
+  if [[ $task_downgrade == 1 ]]; then task_install_args+=(--allow-downgrade); fi
+  bash "$task_install_dir/install.sh" "${task_install_args[@]}"
   echo "GitHub source archive SHA256: $task_actual_sha256"
-  echo 'Installation complete. Guide: /usr/local/share/doc/server-guard/README.md'
+  echo 'Management files ready. Guide: /usr/local/share/doc/server-guard/README.md'
   if [[ $task_ui == 1 && -t 1 ]] && ( : </dev/tty ) 2>/dev/null; then
     # Reconnect stdin to the terminal for pipe/process-substitution installs.
     # The local install.sh process has exited and released its management lock.
     /usr/local/sbin/server-guard setup </dev/tty
   else
-    echo 'Open guided setup: sudo --preserve-env=SSH_CONNECTION server-guard setup'
+    if [[ $task_upgrade == 1 ]]; then
+      echo 'Open management: sudo --preserve-env=SSH_CONNECTION server-guard'
+    else
+      echo 'Open guided setup: sudo --preserve-env=SSH_CONNECTION server-guard setup'
+    fi
   fi
 }
 

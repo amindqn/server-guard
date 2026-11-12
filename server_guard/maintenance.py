@@ -69,45 +69,79 @@ class StorageManager:
         path = absolute_path(path)
         if not 1 <= minimum_mib <= 1048576 or not 1 <= limit <= 100:
             raise GuardError("Minimum must be 1..1048576 MiB; displayed files 1..100.")
+        if not 1 <= max_entries <= 10000000 or not 1 <= max_seconds <= 3600:
+            raise GuardError("Scan budget must be 1..10000000 entries and 1..3600 seconds.")
         fd = self.directory(path)
         started, entries, errors, skipped, heap = self.clock(), 0, 0, 0, []
-        truncated = False
+        truncated, reason, file_count, directory_count = False, "", 0, 0
+        skipped_paths = []
         try:
             device = os.fstat(fd).st_dev
             def onerror(exc):
                 nonlocal errors
                 errors += 1
+
+            def budget():
+                nonlocal entries, truncated, reason
+                elapsed = self.clock() - started
+                if entries >= max_entries or elapsed >= max_seconds:
+                    truncated = True
+                    reason = "entry limit" if entries >= max_entries else "time limit"
+                    return False
+                entries += 1
+                if progress and entries % 1000 == 0:
+                    progress(entries, elapsed)
+                return True
+
+            def priority(name, base):
+                candidate = str(Path(path) / base / name)
+                if "backup" in name.casefold():
+                    return (0, name.casefold())
+                preferred = ("/var/backups", "/www/backup", "/root", "/home", "/srv", "/mnt", "/media")
+                rank = next((i + 1 for i, root in enumerate(preferred)
+                    if candidate == root or root.startswith(candidate + "/") or candidate.startswith(root + "/")), 100)
+                return (rank, name.casefold())
+
+            def skip(candidate):
+                nonlocal skipped
+                skipped += 1
+                if len(skipped_paths) < 20:
+                    skipped_paths.append(candidate)
+
             # fwalk pins each traversed directory and never follows directory symlinks.
             for base, folders, files, dirfd in os.fwalk(".", dir_fd=fd, follow_symlinks=False,
                                                        onerror=onerror):
                 if self.clock() - started >= max_seconds or entries >= max_entries:
                     truncated = True
+                    reason = "entry limit" if entries >= max_entries else "time limit"
                     break
                 relative = Path(base)
                 if len(relative.parts) > 32:
-                    skipped += len(folders)
+                    for folder in folders:
+                        skip(str(Path(path) / relative / folder))
                     folders[:] = []
+                # Visit likely backup locations before package/application trees
+                # consume a bounded scan. This changes order, not coverage rules.
+                folders.sort(key=lambda name: priority(name, relative))
                 for folder in list(folders):
-                    entries += 1
-                    if entries >= max_entries or self.clock() - started >= max_seconds:
-                        truncated = True
+                    if not budget():
                         break
+                    directory_count += 1
                     absolute = str(Path(path) / relative / folder)
                     try:
                         info = os.stat(folder, dir_fd=dirfd, follow_symlinks=False)
                         if info.st_dev != device or stat.S_ISLNK(info.st_mode) or absolute in {"/proc", "/sys", "/dev", "/run"}:
                             folders.remove(folder)
-                            skipped += 1
+                            skip(absolute)
                     except OSError:
                         folders.remove(folder)
                         errors += 1
                 if truncated:
                     break
                 for name in files:
-                    entries += 1
-                    if entries >= max_entries or self.clock() - started >= max_seconds:
-                        truncated = True
+                    if not budget():
                         break
+                    file_count += 1
                     try:
                         info = os.stat(name, dir_fd=dirfd, follow_symlinks=False)
                         if not stat.S_ISREG(info.st_mode) or info.st_dev != device or info.st_size < minimum_mib * 1024 ** 2:
@@ -123,14 +157,15 @@ class StorageManager:
                             heapq.heapreplace(heap, record)
                     except OSError:
                         errors += 1
-                    if progress and entries % 1000 == 0:
-                        progress(entries, self.clock() - started)
                 if truncated:
                     break
         finally:
             os.close(fd)
         report = {"id": uuid.uuid4().hex, "time": time.time(), "root": path, "entries": entries,
                   "errors": errors, "skipped": skipped, "truncated": truncated,
+                  "truncated_reason": reason, "file_entries": file_count, "directory_entries": directory_count,
+                  "minimum_mib": minimum_mib, "max_entries": max_entries, "max_seconds": max_seconds,
+                  "skipped_paths": skipped_paths,
                   "seconds": round(self.clock() - started, 2), "files": [row[2] for row in sorted(heap, reverse=True)]}
         self.f.path(SCANS).mkdir(parents=True, mode=0o700, exist_ok=True)
         self.f.write(SCANS + "/" + report["id"] + ".json", json.dumps(report, indent=2))
@@ -149,12 +184,18 @@ class StorageManager:
 
     @staticmethod
     def show(report):
-        print(f"STORAGE SCAN {report['id']} | {clean(report['root'])} | {report['entries']} file entries | {report['seconds']}s")
-        print(f"Coverage: {'PARTIAL: time/entry limit reached' if report['truncated'] else 'completed within scan limits'}; {report['errors']} errors; {report['skipped']} symlinks/mounts/deep directories skipped.")
+        print(f"STORAGE SCAN {report['id']} | {clean(report['root'])} | {report['entries']} entries checked | {report['seconds']}s")
+        print(f"Coverage: {'PARTIAL: ' + report.get('truncated_reason', 'time/entry limit') + ' reached' if report['truncated'] else 'completed within scan limits'}; {report['errors']} errors; {report['skipped']} symlinks/mounts/deep directories skipped.")
+        for path in report.get("skipped_paths", []):
+            print("Skipped (scan separately if needed): " + clean(path))
         print("Ranked by allocated disk bytes; sparse files may have much larger logical sizes.")
         for i, item in enumerate(report["files"], 1):
             print(f" {i:>3} {size(item['allocated']):>12} allocated | {size(item['identity']['size']):>12} logical | {'review/delete' if item['removable'] else 'inspect only'} | {clean(item['path'])}")
-        print("No files deleted. Review one item with health delete SCAN_ID ITEM; deleting requires --yes.")
+        if not report["files"]:
+            print(f"No matching files found in the checked portion (minimum {report.get('minimum_mib', '?')} MiB).")
+        if report["truncated"]:
+            print("This is not proof that no other large files exist. Scan /var/backups, /www/backup, /root or /home directly, lower --min-mib, or raise --max-entries/--max-seconds.")
+        print("No files deleted. Review one listed item with health delete SCAN_ID ITEM; deleting requires --yes.")
 
     def item(self, scan_id, index):
         if not re.fullmatch(r"[a-f0-9]{32}", scan_id):

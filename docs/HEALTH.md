@@ -42,12 +42,15 @@ The terminal menu collects the interval and warning thresholds with a final conf
 ```bash
 sudo server-guard health files /var --min-mib 100 --limit 20
 sudo server-guard health files /home --min-mib 500
+sudo server-guard health files / --min-mib 100 --limit 50 --max-entries 1000000 --max-seconds 120
 # Replace SCAN_ID and ITEM with the values printed by an inventory:
 sudo server-guard health delete SCAN_ID ITEM
 sudo server-guard health delete SCAN_ID ITEM --yes
 ```
 
-Inventory is read-only. It stays on one filesystem, skips symlinks/pseudo-filesystems, and stops after 100,000 entries or approximately 30 seconds with a partial-coverage notice. Files are ranked by **allocated bytes**, with logical size alongside it, so sparse files are not assumed to occupy their full logical size. The limits are cooperative; a stalled underlying filesystem can still delay a read. Inventories show errors/skipped areas; absence from a partial inventory does not prove a file does not exist. Scan mounted data directories separately. Ten private inventories are retained; deletion requires an inventory less than one hour old.
+Inventory is read-only. It stays on one filesystem, skips symlinks/pseudo-filesystems, and defaults to 100,000 entries or approximately 30 seconds with a partial-coverage notice. `--max-entries` and `--max-seconds` increase those budgets, up to 10,000,000 entries and 3600 seconds. The terminal offers Quick and Extended presets. Backup-named folders and likely backup roots are visited before large package/application trees; this improves bounded searches without claiming full coverage. Progress appears every 1000 entries, including small files that do not match the size filter.
+
+Files are ranked by **allocated bytes**, with logical size alongside it, so sparse files are not assumed to occupy their full logical size. The limits are cooperative; a stalled underlying filesystem can still delay a read. Inventories show errors/skipped areas and sample skipped paths; absence from a partial inventory does not prove a file does not exist. If an empty scan hits a limit, scan likely locations such as `/var/backups`, `/www/backup`, `/root` or `/home` directly and consider lowering the size threshold. A directory may contain many smaller backups even when no individual file meets that threshold. Scan mounted data directories separately. Ten private inventories are retained; deletion requires an inventory less than one hour old.
 
 Deletion is offered for reviewed regular files in `/home`, `/root`, `/srv`, `/tmp`, `/var/tmp`, `/var/backups`, `/www/backup` and `/var/log`. System/package directories, SSH/GPG directories, Server Guard recovery files, journals, known database directories and common database-file formats are inspect-only. This does not identify every possible application data format: review the exact path, purpose and backup yourself. Nothing is selected for deletion just because it is large.
 

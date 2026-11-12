@@ -19,6 +19,7 @@ from .mongodb import MongoDBManager, app_database, mongo_name
 from .uninstall import UninstallManager
 from .health import DEFAULT_THRESHOLDS, HealthChecker, HealthMonitor, HealthView, ReportStore, utc
 from .maintenance import APPLICATION_UNITS, MaintenanceActions, StorageManager, absolute_path
+from .updater import UpdateManager
 
 
 def parser():
@@ -29,6 +30,12 @@ def parser():
         c = sub.add_parser(name)
         if name == "apply":
             c.add_argument("--replace-ufw", action="store_true", help="replace active UFW with the reviewed policy")
+    c = sub.add_parser("self-update", help="update Server Guard code/docs while preserving configuration and application data")
+    c.add_argument("--check", action="store_true", help="inspect the selected source without changing installed files")
+    c.add_argument("--repo", help="GitHub OWNER/REPOSITORY; defaults to the recorded installation source")
+    c.add_argument("--ref", help="branch/tag/commit; defaults to the recorded installation ref")
+    c.add_argument("--sha256", help="expected GitHub source archive SHA-256")
+    c.add_argument("--allow-downgrade", action="store_true")
     c = sub.add_parser("init")
     c.add_argument("--ssh-port", type=port, default=22)
     c = sub.add_parser("confirm")
@@ -136,6 +143,8 @@ def parser():
     c.add_argument("path", nargs="?", default="/var", type=absolute_path)
     c.add_argument("--min-mib", type=int, default=100)
     c.add_argument("--limit", type=int, default=20)
+    c.add_argument("--max-entries", type=int, default=100000, help="maximum inspected directory/file entries (up to 10000000)")
+    c.add_argument("--max-seconds", type=int, default=30, help="cooperative scan time budget (up to 3600 seconds)")
     c = hs.add_parser("delete", help="review one inventory item; --yes permanently deletes it")
     c.add_argument("scan_id")
     c.add_argument("item", type=int)
@@ -316,6 +325,9 @@ def dispatch(h, a):
         h.r.run("apt-get", "update", capture=False)
         h.r.run("apt-get", "upgrade", capture=False)
         print("Review reboot requirements using status. Update the panel and V2Ray separately.")
+    elif cmd == "self-update":
+        UpdateManager(h).run(check=a.check, repository=a.repo, ref=a.ref, expected=a.sha256,
+                             allow_downgrade=a.allow_downgrade)
     elif cmd == "panel":
         panel = PanelManager(h)
         if a.action == "info":
@@ -384,8 +396,9 @@ def health_command(h, a):
             print(f"{utc(report['time'])} | {report['status']} | {r.get('cpu_percent', '?')} | {r.get('memory_percent', '?')} | {max(disks) if disks else '?'} | {counts.get('WARN', 0)}/{counts.get('CRITICAL', 0)}/{counts.get('UNKNOWN', 0)} | {report['scope']}")
     elif a.action == "files":
         storage = StorageManager(h)
-        print(f"Scanning {a.path}: one filesystem, up to 100000 entries/30 seconds; no files will be deleted.", flush=True)
-        report = storage.scan(a.path, a.min_mib, a.limit, lambda n, seconds: print(f"[scan] {n} entries checked, {seconds:.1f}s elapsed", flush=True))
+        print(f"Scanning {a.path}: one filesystem, up to {a.max_entries} entries/{a.max_seconds} seconds; no files will be deleted.", flush=True)
+        report = storage.scan(a.path, a.min_mib, a.limit, lambda n, seconds: print(f"[scan] {n} entries checked, {seconds:.1f}s elapsed", flush=True),
+                              max_entries=a.max_entries, max_seconds=a.max_seconds)
         storage.show(report)
     elif a.action == "delete":
         StorageManager(h).delete(a.scan_id, a.item, a.yes)
@@ -408,6 +421,10 @@ def health_command(h, a):
 def execute_locked(h, args):
     """Command adapter shared by CLI and terminal UI; lock only submitted work."""
     parsed = parser().parse_args(args) if isinstance(args, list) else args
+    if parsed.command == "self-update":
+        # Network inspection is unlocked; the installer locks/rechecks only publication.
+        dispatch(h, parsed)
+        return
     if parsed.command == "health" and (parsed.action in {"check", "watch", "show", "history", "files"} or not getattr(parsed, "yes", False)):
         # Probes, filesystem scans and live-view sleeps must not stall rollback.
         dispatch(h, parsed)
@@ -426,6 +443,8 @@ def menu(h, setup=False):
         if setup:
             ui.setup()
         ui.run()
+        if ui.restart_requested:
+            os.execv("/usr/local/sbin/server-guard", ["server-guard", "menu"])
     except EOFError:
         return
 

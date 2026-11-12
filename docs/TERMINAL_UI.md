@@ -2,11 +2,13 @@
 
 ## Quick install
 
-Run in a root Bash shell on Ubuntu 24.04, using the repository's `master` branch:
+Run from a sudo-capable SSH account on Ubuntu 24.04, using the repository's `master` branch:
 
 ```bash
-bash <(curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/amindqn/server-guard/master/bootstrap.sh) --ref master
+sudo --preserve-env=SSH_CONNECTION bash -c 'bash <(curl -fsSL --proto "=https" --proto-redir "=https" https://raw.githubusercontent.com/amindqn/server-guard/master/bootstrap.sh) --ref master'
 ```
+
+Use the command exactly as shown: process substitution is created inside the elevated Bash. Prefixing `bash <(curl ...)` directly with sudo loses its temporary file descriptor, because [sudo closes nonstandard descriptors by default](https://manpages.ubuntu.com/manpages/noble/man8/sudo.8.html). This produces `/dev/fd/63: No such file or directory` before the bootstrap can run. If you already have a root Bash shell, omit the outer sudo/Bash wrapper and run `bash <(curl ...)` directly. No sudo policy change is needed.
 
 The command uses the same short-installer and persistent management-menu workflow that motivated the [3x-ui reference](https://github.com/MHSanaei/3x-ui#quick-start). Server Guard's menus configure the services described in this repository; no 3x-ui code or panel is installed by this command.
 
@@ -27,7 +29,7 @@ Run `sudo server-guard` or `sudo server-guard menu`:
 
 ```text
 ==============================================================================
-SERVER GUARD 1.4.0  /  Management
+SERVER GUARD 1.5.0  /  Management
 ==============================================================================
 Policy: SSH 22 | root SSH disabled | 1 users | firewall config saved.
    1  Setup assistant / next step
@@ -38,6 +40,7 @@ Policy: SSH 22 | root SSH disabled | 1 users | firewall config saved.
    6  Server health, monitoring and maintenance
    7  Review changes, confirm or recover
    8  Uninstall Server Guard
+   9  Update Server Guard (keep configuration and data)
    0  Exit
 Select:
 ```
@@ -54,16 +57,21 @@ The summary describes the saved policy/files, not proof that every running servi
 | Health and maintenance | Progress checks, live CPU/RAM/storage/network/process view, saved results/history, storage explorer and reviewed cleanup, runtime CPU scheduling, scheduled monitoring, existing status/audit/update/SSH-help submenu |
 | Access changes | Plan, apply, confirm pending ID from a new login, roll back |
 | Uninstall | Review removal scope, create a private backup and remove the manager while preserving working protection/apps/data |
+| Update Server Guard | Check the recorded GitHub source, or install the manager update and reopen the menu with the new code; preserve settings and application data |
 
 Optional service controls operate only on MongoDB and V2Ray. They cannot stop SSH or the firewall through this interface. Starting MongoDB requires successful first-user bootstrap. New port/session/SSH policies remain staged until apply; database/client/account/key/package operations retain their documented immediate behavior.
 
 The health section offers a **13-step check** with per-probe progress, live viewing (Ctrl+C returns), timestamped saved results and history. WARN/CRITICAL findings suggest a next action; UNKNOWN states identify missing evidence. Storage inventory is read-only; selecting a scan item previews its exact path before deletion confirmation. Cleanup and CPU scheduling forms explain impact before submitting a command. Scheduled local monitoring is optional and collects its interval/thresholds before confirmation. All mutation confirmations default to No; pending access changes block cleanup/tuning/scheduler mutations, while checks and live monitoring remain available. See [HEALTH.md](HEALTH.md) for commands, supported paths/services, retention and limitations.
+
+Storage inventory offers Quick (100,000 entries/30 seconds) and Extended (1,000,000 entries/120 seconds) budgets. Backup locations are visited first. Empty partial results explain that other large files may remain unchecked and suggest targeted directories or larger budgets. Skipped mounts can be scanned separately; no file deletion occurs during inventory.
 
 Selecting a panel before applying/confirming the SSH/firewall baseline opens Guided setup immediately, before a vendor download or checksum prompt. Finish the administrator key-login test, apply the reviewed plan, reconnect and confirm its printed change ID; then return to the panel menu. The CLI installer also enforces this prerequisite. A previously downloaded installer can be reused after confirmation.
 
 The setup checklist marks completed steps, the next incomplete step and remaining work. The key-help page explains the local private-key passphrase, server password and sudo password separately. Diagnose reports the current transport's actual authentication method from trusted SSH journal fields, including password and keyboard-interactive logins. Generated test commands disable connection sharing and password fallback, so a successful test really uses the selected key.
 
 Removal is also available with `sudo server-guard uninstall` and the [GitHub one-line uninstaller](../README.md#quick-uninstall). A pending access change blocks removal; confirm or roll it back first. Removing the manager does not re-enable root/password access or uninstall panels/databases. The menu exits after successful removal.
+
+Menu **9** checks/updates Server Guard itself; Ubuntu package updates remain in **6 → Security details, audits and updates**. Update confirmation defaults to No. A failed update leaves the menu available; success starts a fresh menu process so imports use the new release. The check downloads and inspects source without executing it or changing installed files. Downloading does not hold the access-management lock; publication acquires it and rechecks pending changes. The updater creates a private manager/config recovery backup and never restarts workloads or reapplies SSH/firewall policy. For a version without menu 9 or `self-update`, use the [bootstrap upgrade block](../README.md#update-server-guard-without-resetting-your-server).
 
 ## Input and secrets
 

@@ -4,11 +4,13 @@ A repeatable administration tool for **Ubuntu 24.04 LTS**, targeting your **x86_
 
 ## Quick start
 
-Run this command in a **root Bash shell** on the server (use `sudo -i` first if needed). It downloads the `master` branch of [amindqn/server-guard](https://github.com/amindqn/server-guard):
+From your normal SSH account with sudo access, run this command on the server. It downloads the `master` branch of [amindqn/server-guard](https://github.com/amindqn/server-guard):
 
 ```bash
-bash <(curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/amindqn/server-guard/master/bootstrap.sh) --ref master
+sudo --preserve-env=SSH_CONNECTION bash -c 'bash <(curl -fsSL --proto "=https" --proto-redir "=https" https://raw.githubusercontent.com/amindqn/server-guard/master/bootstrap.sh) --ref master'
 ```
+
+The outer privileged Bash creates the `<(...)` descriptor after sudo has started. Do not use `sudo bash <(curl ...)`: sudo normally closes that descriptor, causing `/dev/fd/63: No such file or directory`. If already in a root Bash shell, use `bash <(curl ...)` directly without sudo. A complete-download temporary-file method is also provided below.
 
 The installer downloads the project and **opens the terminal setup UI automatically**. It guides you through dependency installation, the current SSH port, an administrator username/public key and a tested key login. It pauses for the new SSH login before applying access restrictions, then requires another new login to confirm the rollback-protected change. Your existing root/password connection stays available during the initial account setup.
 
@@ -24,18 +26,57 @@ Resume the first-time wizard from the new administrator SSH connection:
 sudo --preserve-env=SSH_CONNECTION server-guard setup
 ```
 
-The home menu has eight groups: **setup, accounts/SSH, firewall/web, applications/databases, V2Ray, health/updates, changes/recovery, and uninstall**. Existing features remain available inside those groups. Setup shows completed steps and the next action; roles, database engines and key actions use numbered choices. Enter a number, press Enter to accept a default, use `0` to go back, or enter `:back` to cancel a form. Colors are optional (`NO_COLOR=1`), and all choices/errors are written as text. No additional terminal UI packages are needed.
+The home menu has nine groups: **setup, accounts/SSH, firewall/web, applications/databases, V2Ray, health/maintenance, changes/recovery, uninstall, and update Server Guard**. Existing features remain available inside those groups. Setup shows completed steps and the next action; roles, database engines and key actions use numbered choices. Enter a number, press Enter to accept a default, use `0` to go back, or enter `:back` to cancel a form. Colors are optional (`NO_COLOR=1`), and all choices/errors are written as text. No additional terminal UI packages are needed.
 
 For an install without opening the UI, append `--no-ui`. With no interactive terminal, the installer prints the command to open setup later. Have provider console access and a snapshot ready before applying security changes. Keep the panel/database ports closed in your provider firewall. [Detailed terminal walkthrough](docs/TERMINAL_UI.md).
 
-To update the management tool, rerun the same install command. Existing policy/accounts are retained. Confirm or roll back a pending access change before updating.
+## Update Server Guard without resetting your server
+
+**Already installed an older version without an update option?** Run this entire block on the server from your normal sudo account. It downloads the new bootstrap completely before execution and updates the existing manager without opening setup:
+
+```bash
+sudo bash <<'BASH'
+set -euo pipefail
+umask 077
+task_bootstrap=$(mktemp -t server-guard-bootstrap.XXXXXXXX)
+trap 'rm -f -- "$task_bootstrap"' EXIT
+curl -fsSL --proto '=https' --proto-redir '=https' \
+  https://raw.githubusercontent.com/amindqn/server-guard/master/bootstrap.sh \
+  --output "$task_bootstrap"
+bash "$task_bootstrap" --repo amindqn/server-guard --ref master --upgrade-only --no-ui
+BASH
+```
+
+This works with the previous 1.4.x layout and does not call any command from the old manager. `--upgrade-only` refuses a server without an existing installation. The repository's selected ref must contain the new bootstrap and installer (1.5.0 or later); publish those files before using this command. If using a fork, replace the owner/repository in both places.
+
+**After this first upgrade**, use these commands or open `sudo server-guard` → **9 Update Server Guard**:
+
+```bash
+sudo server-guard self-update --check   # download/inspect; no installed files changed
+sudo server-guard self-update           # install the available manager update
+sudo server-guard --version
+```
+
+The update submenu offers **Check** and **Install**, then reopens the menu using the updated code after success. The CLI update runs without interactive setup. The existing `sudo server-guard update` still upgrades **Ubuntu packages**; it is separate from `self-update`.
+
+Updates replace management code and documentation. They preserve existing policy, SSH settings and authorized keys, Linux users/roles, session limits/ledger, firewall rules and open ports, panel installations, MongoDB and V2Ray configuration/data/clients, scheduled monitoring and saved history. They do not run `prepare`, `init` or `apply`, install/upgrade Ubuntu packages, restart services or reboot the server. Confirm or roll back any pending access change first; a pending rollback blocks installation, while `--check` remains available.
+
+The installer validates a complete staged version before activation and creates a private recovery backup at `/var/backups/server-guard/updates/`. A detected publication/validation failure or caught interruption restores the previous manager files. Complete releases remain under `/opt/server-guard/releases/`; the launcher resolves `/opt/server-guard/current` once per process. The stable standalone PAM helper path remains available to older SSH configurations. Existing settings are not reinitialized, and this release requires no policy-format migration. See [update and recovery details](docs/OPERATIONS.md#updating-the-manager).
+
+The default source is the recorded GitHub repository/ref, or `amindqn/server-guard` at `master` for a local installation. To select reviewed code explicitly:
+
+```bash
+sudo server-guard self-update --ref TRUSTED_COMMIT_SHA --sha256 SOURCE_ARCHIVE_SHA256
+```
+
+Use a repository/ref you trust: installing an update executes its code as root. `--sha256` checks the GitHub source archive, not the separately built release archive. Downgrades require `--allow-downgrade`; source/ref/digest are recorded only after successful installation. The recovery backup contains manager code and configuration, including sensitive SSH/V2Ray files. It is **not** a full website/database backup; continue your regular off-server backups.
 
 ## Quick uninstall
 
-Run in a **root Bash shell on the server**, including when your installed version has no uninstall command:
+From your normal SSH account with sudo access, including when your installed version has no uninstall command:
 
 ```bash
-bash <(curl -fsSL --proto '=https' --proto-redir '=https' https://raw.githubusercontent.com/amindqn/server-guard/master/uninstall.sh)
+sudo bash -c 'bash <(curl -fsSL --proto "=https" --proto-redir "=https" https://raw.githubusercontent.com/amindqn/server-guard/master/uninstall.sh)'
 ```
 
 It downloads the standalone uninstaller without installing/updating the manager, shows a removal plan and requests confirmation. To preview only, append `--dry-run`. The bootstrap also accepts `--uninstall` with the same options.
@@ -128,13 +169,13 @@ scp -r /PATH/TO/server-config root@SERVER_IP:/root/server-config
 
 Use `scp -P CURRENT_SSH_PORT` if the current port is not 22. Replace placeholders and paths with real values. Alternatively, copy and extract the supplied release archive on the server.
 
-For the archive, copy `server-guard-1.4.0.tar.gz` and its `.sha256` file to `/root`, then on the server run:
+For the archive, copy `server-guard-1.5.0.tar.gz` and its `.sha256` file to `/root`, then on the server run:
 
 ```bash
 cd /root
-sha256sum -c server-guard-1.4.0.tar.gz.sha256
-tar -xzf server-guard-1.4.0.tar.gz
-cd /root/server-guard-1.4.0
+sha256sum -c server-guard-1.5.0.tar.gz.sha256
+tar -xzf server-guard-1.5.0.tar.gz
+cd /root/server-guard-1.5.0
 ```
 
 Use this extracted directory in place of `/root/server-config` below. The adjacent checksum detects transfer damage; obtain the archive/checksum through a trusted channel.

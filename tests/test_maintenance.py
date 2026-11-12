@@ -105,6 +105,46 @@ class StorageTests(unittest.TestCase):
             self.assertTrue(report["truncated"])
             self.assertLessEqual(report["entries"], 1)
 
+    def test_backup_folder_is_visited_before_large_unrelated_tree_uses_budget(self):
+        with tempfile.TemporaryDirectory() as root:
+            host = Host(Files(root), MaintenanceRunner())
+            for number in range(5):
+                host.f.write(f"/scan/aaa-packages/tiny{number}", "small")
+            host.f.write("/scan/z-backups/archive.tar", b"a" * 1024 ** 2)
+            report = StorageManager(host).scan("/scan", minimum_mib=1, max_entries=3)
+            self.assertTrue(report["truncated"])
+            self.assertEqual(report["files"][0]["path"], "/scan/z-backups/archive.tar")
+            self.assertEqual(report["truncated_reason"], "entry limit")
+
+    def test_last_budget_entry_is_inspected_and_empty_partial_result_is_explained(self):
+        with tempfile.TemporaryDirectory() as root:
+            host = Host(Files(root), MaintenanceRunner())
+            host.f.write("/scan/archive.tar", b"a" * 1024 ** 2)
+            storage = StorageManager(host)
+            report = storage.scan("/scan", minimum_mib=1, max_entries=1)
+            self.assertEqual(len(report["files"]), 1)
+            report = storage.scan("/scan", minimum_mib=500, max_entries=1)
+            report["truncated"] = True
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                storage.show(report)
+            self.assertIn("minimum 500 MiB", output.getvalue())
+            self.assertIn("not proof that no other large files exist", output.getvalue())
+
+    def test_progress_is_emitted_for_small_files_and_scan_budget_can_be_increased(self):
+        with tempfile.TemporaryDirectory() as root:
+            host = Host(Files(root), MaintenanceRunner())
+            for number in range(1005):
+                host.f.write(f"/scan/tiny{number}", "small")
+            progress = []
+            report = StorageManager(host).scan("/scan", minimum_mib=1, max_entries=2000,
+                                              progress=lambda *args: progress.append(args))
+            self.assertEqual(progress[0][0], 1000)
+            self.assertFalse(report["truncated"])
+            self.assertEqual(report["file_entries"], 1005)
+            with self.assertRaises(GuardError):
+                StorageManager(host).scan("/scan", max_entries=0)
+
     def test_stale_inventory_and_pending_access_change_block_deletion(self):
         with tempfile.TemporaryDirectory() as root:
             host, storage = self.fixture(root)

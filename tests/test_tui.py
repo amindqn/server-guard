@@ -105,6 +105,41 @@ class TerminalWorkflowTests(unittest.TestCase):
                 host.f.write("/var/lib/server-guard/pending.json", '{"id":"new-change"}')
         return TerminalApp(host, execute, console), calls, output
 
+    def test_main_update_menu_checks_without_exiting_or_installing(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, output = self.fixture(root, ["9", "1", "0", "0"])
+            app.run()
+            self.assertEqual(calls, [["self-update", "--check"]])
+            self.assertIn("Update Server Guard", output.getvalue())
+            self.assertFalse(app.restart_requested)
+
+    def test_cancelled_update_and_failed_update_leave_menu_available(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, [""])
+            app.update_tool()
+            self.assertEqual(calls, [])
+            self.assertFalse(app.exit_requested)
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, ["y"])
+            app.execute = lambda args: (_ for _ in ()).throw(GuardError("Download failed"))
+            with self.assertRaises(GuardError):
+                app.update_tool()
+            self.assertFalse(app.restart_requested)
+            self.assertFalse(app.exit_requested)
+
+    def test_successful_update_restarts_in_a_fresh_program_process(self):
+        from server_guard.cli import menu
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, ["y"])
+            app.update_tool()
+            self.assertEqual(calls, [["self-update"]])
+            self.assertTrue(app.exit_requested)
+            with patch("server_guard.tui.TerminalApp", return_value=app), \
+                 patch.object(app, "run"), patch("sys.stdin.isatty", return_value=True), \
+                 patch("sys.stdout.isatty", return_value=True), patch("server_guard.cli.os.execv") as restart:
+                menu(app.h)
+            restart.assert_called_once_with("/usr/local/sbin/server-guard", ["server-guard", "menu"])
+
     def test_cancelled_ssh_form_never_submits_a_command(self):
         with tempfile.TemporaryDirectory() as root:
             app, calls, _ = self.fixture(root, [":back"])
@@ -179,6 +214,13 @@ class TerminalWorkflowTests(unittest.TestCase):
             app, calls, _ = self.fixture(root, [scan_id, "2", "n"])
             app.storage_delete()
             self.assertEqual(calls, [["health", "delete", scan_id, "2"]])
+
+    def test_extended_storage_scan_submits_larger_explicit_budgets(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, ["/var/backups", "100", "2"])
+            app.storage_scan()
+            self.assertEqual(calls, [["health", "files", "/var/backups", "--min-mib", "100",
+                                     "--max-entries", "1000000", "--max-seconds", "120"]])
 
     def test_cpu_scheduling_form_changes_only_selected_application(self):
         with tempfile.TemporaryDirectory() as root:

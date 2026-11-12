@@ -137,6 +137,7 @@ class TerminalApp:
         self.execute = execute
         self.c = console or TerminalConsole()
         self.exit_requested = False
+        self.restart_requested = False
 
     def run_command(self, *args):
         self.c.say("Running: server-guard " + shlex.join(str(a) for a in args), "note")
@@ -188,7 +189,8 @@ class TerminalApp:
                  MenuItem("5", "V2Ray and client connections", self.v2ray_menu),
                  MenuItem("6", "Server health, monitoring and maintenance", self.maintenance_menu),
                  MenuItem("7", "Review changes, confirm or recover", self.access_menu),
-                 MenuItem("8", "Uninstall Server Guard", self.uninstall_menu)]
+                 MenuItem("8", "Uninstall Server Guard", self.uninstall_menu),
+                 MenuItem("9", "Update Server Guard (keep configuration and data)", self.update_menu)]
         while not self.exit_requested:
             try:
                 action = self.c.choose("Management", items, self.summary(), back="Exit")
@@ -210,6 +212,16 @@ class TerminalApp:
             MenuItem("3", "SSH key setup / forgotten passphrase help", self.key_help),
             MenuItem("4", "Diagnose this SSH connection", lambda: self.run_command("ssh", "diagnose")),
             MenuItem("5", "Verify this new administrator key login", lambda: self.run_command("verify-login"))])
+
+    def update_menu(self):
+        self.page("Update Server Guard", [
+            MenuItem("1", "Check the recorded source for an update", lambda: self.run_command("self-update", "--check")),
+            MenuItem("2", "Install update and reopen the management menu", self.update_tool)],
+            "Updates only management code/docs. SSH/firewall settings, users/keys, history, panels, MongoDB/V2Ray and app data stay in place. A private recovery backup is created first.")
+
+    def update_tool(self):
+        if self.operation("self-update", prompt="Download and install the manager update, then reopen this menu?"):
+            self.restart_requested, self.exit_requested = True, True
 
     def applications_menu(self):
         self.page("Applications and databases", [
@@ -550,7 +562,7 @@ class TerminalApp:
             MenuItem("1", "Listening ports and security service status", lambda: self.run_command("status")),
             MenuItem("2", "Run Lynis security audit", lambda: self.run_command("audit")),
             MenuItem("3", "Install / repair base dependencies", lambda: self.operation("prepare")),
-            MenuItem("4", "Review and install package updates", lambda: self.operation("update")),
+            MenuItem("4", "Review and install Ubuntu package updates", lambda: self.operation("update")),
             MenuItem("5", "Diagnose this SSH connection", lambda: self.run_command("ssh", "diagnose")),
             MenuItem("6", "SSH key help", self.key_help)])
 
@@ -569,7 +581,13 @@ class TerminalApp:
     def storage_scan(self):
         path = self.c.ask("Directory to inspect (one filesystem)", "/var", absolute_path)
         minimum = self.c.ask("Minimum logical file size in MiB", 100, bounded_number(1, 1048576))
-        self.run_command("health", "files", path, "--min-mib", minimum)
+        mode = self.c.options("Scan budget (backup folders are visited first)", [
+            ("Quick: 100000 entries / 30 seconds", "quick"),
+            ("Extended: 1000000 entries / 120 seconds", "extended")], "quick")
+        args = ["health", "files", path, "--min-mib", minimum]
+        if mode == "extended":
+            args += ["--max-entries", "1000000", "--max-seconds", "120"]
+        self.run_command(*args)
 
     def storage_delete(self):
         scan = self.c.ask("Storage scan ID")
