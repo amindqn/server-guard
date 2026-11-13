@@ -27,6 +27,20 @@ class RuntimeRunner:
 
 
 class UninstallTests(unittest.TestCase):
+    def test_uninstall_stops_defense_jobs_and_keeps_native_bans_and_updates(self):
+        from server_guard.defense_config import DATABASE, JAIL, SERVICE, TIMER, UNIT, timer
+        with tempfile.TemporaryDirectory() as root:
+            host, manager = self.fixture(root, applied=True)
+            host.f.write(UNIT, SERVICE, 0o644)
+            host.f.write(TIMER, timer(15), 0o644)
+            host.f.write(JAIL, "# native SSH and web jails stay")
+            host.f.write(DATABASE, "# keep native ban history")
+            self.remove(manager)
+            self.assertFalse(host.f.path(UNIT).exists())
+            self.assertFalse(host.f.path(TIMER).exists())
+            self.assertEqual(host.f.path(JAIL).read_text(), "# native SSH and web jails stay")
+            self.assertIn((("systemctl", "disable", "--now", "server-guard-defense.timer"), {}), host.r.calls)
+
     def test_uninstall_after_versioned_update_detaches_runtime_and_preserves_data(self):
         from server_guard.installation import ToolInstaller
         with tempfile.TemporaryDirectory() as root:

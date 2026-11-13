@@ -154,6 +154,14 @@ Use the supported uninstaller below rather than deleting `/opt/server-guard` or 
 
 Panel installation and installed packages/users have no automatic uninstall. Do not install the second panel over the first. Rebuild a clean server and restore application backups to change panels safely.
 
+## Automatic attack protection
+
+The optional [automatic defense profile](DEFENSE.md) is managed with menu **10** or `server-guard defense`. It uses native Fail2Ban plus Ubuntu update timers and a resource-limited security-file/firewall/service checker. Enable/disable needs a fresh-login confirmation; updates of the manager itself do not automatically enable it. `defense status`, `scan` and `history` inspect evidence without changing policy. Reports are local; configure external alert delivery separately.
+
+After an intentional confirmed SSH/firewall/account/package/panel/manager change, inspect `defense scan`, explain every difference and then use `defense baseline --yes` to accept the reviewed state. Scans never reset their own trusted baseline or restore/delete unexpected files. Unexplained changes require investigation, not baseline acceptance. A root compromise can bypass local checks; keep private off-server logs and restore-tested backups.
+
+False-ban recovery is `server-guard defense unban sshd CLIENT_IP --yes` from an existing session/provider console, including while access confirmation is pending. This removes one managed-jail ban without making the IP permanently trusted. Optional web bans are only for trusted root-owned logs with directly connected clients; do not use origin firewall bans to enforce client addresses carried only in CDN/proxy headers.
+
 ## Updating the manager
 
 Use `sudo server-guard self-update --check`, then `sudo server-guard self-update`, or menu **9**. Older installations without this command use the [README bootstrap upgrade](../README.md#update-server-guard-without-resetting-your-server). `--upgrade-only` requires an installed manager and skips guided setup. A local checkout/archive can run `sudo bash install.sh --upgrade-only`; copy the entire release, including `scripts/install_tool.py`. `server-guard update` keeps its existing meaning: Ubuntu APT package upgrades.

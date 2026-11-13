@@ -18,6 +18,7 @@ from .services import DB_ENGINES, checksum
 from .ssh_access import client_command
 from .health import DEFAULT_THRESHOLDS
 from .maintenance import APPLICATION_UNITS, absolute_path
+from .defense_config import JAILS, client_address, nginx_log, trusted_network
 
 
 class Cancelled(Exception):
@@ -190,7 +191,8 @@ class TerminalApp:
                  MenuItem("6", "Server health, monitoring and maintenance", self.maintenance_menu),
                  MenuItem("7", "Review changes, confirm or recover", self.access_menu),
                  MenuItem("8", "Uninstall Server Guard", self.uninstall_menu),
-                 MenuItem("9", "Update Server Guard (keep configuration and data)", self.update_menu)]
+                 MenuItem("9", "Update Server Guard (keep configuration and data)", self.update_menu),
+                 MenuItem("10", "Automatic attack protection and security alerts", self.defense_menu)]
         while not self.exit_requested:
             try:
                 action = self.c.choose("Management", items, self.summary(), back="Exit")
@@ -222,6 +224,38 @@ class TerminalApp:
     def update_tool(self):
         if self.operation("self-update", prompt="Download and install the manager update, then reopen this menu?"):
             self.restart_requested, self.exit_requested = True, True
+
+    def defense_menu(self):
+        self.page("Automatic attack protection", [
+            MenuItem("1", "Protection status and latest security alerts", lambda: self.run_command("defense", "status")),
+            MenuItem("2", "Review / enable automatic defenses", self.enable_defense),
+            MenuItem("3", "Check critical files, firewall and defenses now", lambda: self.run_command("defense", "scan")),
+            MenuItem("4", "Accept reviewed security-file changes as trusted", lambda: self.operation("defense", "baseline", "--yes", prompt="Have you reviewed and explained every change before replacing the trusted baseline?")),
+            MenuItem("5", "Unban one address from a managed jail", self.defense_unban),
+            MenuItem("6", "Disable the extra profile (keep basic SSH/firewall protection)", lambda: self.operation("defense", "disable", "--yes")),
+            MenuItem("7", "Confirm / roll back a protection change", self.access_menu),
+            MenuItem("8", "Security alert history", lambda: self.run_command("defense", "history"))],
+            "Blocks repeated SSH attacks automatically; optional direct-client Nginx protection. Detects critical file/firewall drift and stopped defenses. Alerts are local. Enable/disable requires a new SSH key login to confirm within 10 minutes.")
+
+    def enable_defense(self):
+        self.c.say("The current SSH client is exempted from managed bans when SSH_CONNECTION is preserved. This does not open ports.")
+        def trusted(value):
+            return [] if value.lower() == "none" else [trusted_network(item) for item in value.split()]
+        addresses = self.c.ask("Other trusted administration IPs/CIDRs (space-separated, or none)", "none", trusted)
+        minutes = self.c.ask("Security check interval in minutes", 15, bounded_number(5, 1440))
+        args = ["defense", "enable", "--minutes", minutes, "--yes"]
+        if addresses:
+            args += ["--trusted", *addresses]
+        if self.c.yes("Enable Nginx bans for directly connected clients (no CDN or upstream reverse proxy)?"):
+            self.c.say("Use a root-owned Nginx ERROR log. These filters do not cover your app's login form or all web attacks.")
+            logfile = self.c.ask("Exact Nginx error log", "/var/log/nginx/error.log", nginx_log)
+            args += ["--nginx-log", logfile, "--direct-web-clients"]
+        self.operation(*args, prompt="Enable these defenses with a 10-minute fresh-login confirmation timer?")
+
+    def defense_unban(self):
+        jail = self.c.options("Managed ban jail", [(name, name) for name in JAILS], "sshd")
+        address = self.c.ask("IP address to unban", validate=client_address)
+        self.operation("defense", "unban", jail, address, "--yes")
 
     def applications_menu(self):
         self.page("Applications and databases", [

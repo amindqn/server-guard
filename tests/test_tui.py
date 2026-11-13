@@ -113,6 +113,23 @@ class TerminalWorkflowTests(unittest.TestCase):
             self.assertIn("Update Server Guard", output.getvalue())
             self.assertFalse(app.restart_requested)
 
+    def test_defense_menu_status_scan_and_history_use_cli_grammar(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, output = self.fixture(root, ["10", "1", "3", "8", "0", "0"])
+            app.run()
+            self.assertEqual(calls, [["defense", "status"], ["defense", "scan"], ["defense", "history"]])
+            self.assertIn("Automatic attack protection", output.getvalue())
+
+    def test_defense_enable_form_and_declined_baseline_reset(self):
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, ["203.0.113.7", "15", "n", "y"])
+            app.enable_defense()
+            self.assertEqual(calls, [["defense", "enable", "--minutes", "15", "--yes", "--trusted", "203.0.113.7/32"]])
+        with tempfile.TemporaryDirectory() as root:
+            app, calls, _ = self.fixture(root, ["4", "n", "0"])
+            app.defense_menu()
+            self.assertEqual(calls, [])
+
     def test_cancelled_update_and_failed_update_leave_menu_available(self):
         with tempfile.TemporaryDirectory() as root:
             app, calls, _ = self.fixture(root, [""])

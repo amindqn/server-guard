@@ -29,7 +29,7 @@ Run `sudo server-guard` or `sudo server-guard menu`:
 
 ```text
 ==============================================================================
-SERVER GUARD 1.5.0  /  Management
+SERVER GUARD 1.6.0  /  Management
 ==============================================================================
 Policy: SSH 22 | root SSH disabled | 1 users | firewall config saved.
    1  Setup assistant / next step
@@ -41,6 +41,7 @@ Policy: SSH 22 | root SSH disabled | 1 users | firewall config saved.
    7  Review changes, confirm or recover
    8  Uninstall Server Guard
    9  Update Server Guard (keep configuration and data)
+  10  Automatic attack protection and security alerts
    0  Exit
 Select:
 ```
@@ -58,6 +59,7 @@ The summary describes the saved policy/files, not proof that every running servi
 | Access changes | Plan, apply, confirm pending ID from a new login, roll back |
 | Uninstall | Review removal scope, create a private backup and remove the manager while preserving working protection/apps/data |
 | Update Server Guard | Check the recorded GitHub source, or install the manager update and reopen the menu with the new code; preserve settings and application data |
+| Automatic attack protection | Status/alerts/history; escalating SSH and optional Nginx bans; scheduled security-file/firewall/service checks; explicitly accept reviewed changes; unban one address; disable extras; confirm/rollback |
 
 Optional service controls operate only on MongoDB and V2Ray. They cannot stop SSH or the firewall through this interface. Starting MongoDB requires successful first-user bootstrap. New port/session/SSH policies remain staged until apply; database/client/account/key/package operations retain their documented immediate behavior.
 
@@ -74,6 +76,8 @@ Removal is also available with `sudo server-guard uninstall` and the [GitHub one
 Menu **9** checks/updates Server Guard itself; Ubuntu package updates remain in **6 → Security details, audits and updates**. Update confirmation defaults to No. A failed update leaves the menu available; success starts a fresh menu process so imports use the new release. The check downloads and inspects source without executing it or changing installed files. Downloading does not hold the access-management lock; publication acquires it and rechecks pending changes. The updater creates a private manager/config recovery backup and never restarts workloads or reapplies SSH/firewall policy. For a version without menu 9 or `self-update`, use the [bootstrap upgrade block](../README.md#update-server-guard-without-resetting-your-server).
 
 ## Input and secrets
+
+Menu **10** enables the optional automatic defense profile after confirmed server setup. Its form collects additional trusted administration IPs, the check interval and optional direct-client Nginx error-log protection. It explains proxy/CDN restrictions and requires review before activating. Enable/disable arms the existing 10-minute fresh-login confirmation timer. Read-only scans/status/history remain available during a pending access change and run without holding its management lock. Baseline acceptance and unbanning each require explicit review. The normal health check adds a fourteenth probe when a defense profile is configured, including latest/stale security findings. [Defense setup and recovery](DEFENSE.md).
 
 - Enter a numbered choice; `0` returns to the parent menu or exits the top-level menu. `q` also leaves a menu.
 - Press Enter to use the displayed default. Invalid values show a text error and request the same field again.

@@ -11,6 +11,7 @@ import uuid
 
 from .core import GuardError
 from .health import MONITOR_TIMER, MONITOR_UNIT
+from .defense_config import TIMER as DEFENSE_TIMER, UNIT as DEFENSE_UNIT
 
 
 RETAINED = "/usr/local/lib/server-guard-retained"
@@ -102,7 +103,7 @@ class UninstallManager:
                       self.f.path("/etc/systemd/system/server-guard-v2ray.service").exists()):
             raise GuardError("--purge is available only before hardening/optional-service configuration. "
                              "Use normal uninstall to keep working protection and application data.")
-        known = {PAM, FW_UNIT, EGRESS_UNIT, MONITOR_UNIT, MONITOR_TIMER, *ROLLBACK_UNITS}
+        known = {PAM, FW_UNIT, EGRESS_UNIT, MONITOR_UNIT, MONITOR_TIMER, DEFENSE_UNIT, DEFENSE_TIMER, *ROLLBACK_UNITS}
         for name, text in contents.items():
             if name not in known and (PROGRAM + "/" in text or LAUNCHER in text):
                 raise GuardError(f"Custom integration still calls the manager: {name}. Detach it before uninstall.")
@@ -128,6 +129,7 @@ class UninstallManager:
         print("Create: private recovery backup under /var/backups/server-guard/ before making changes.")
         print("SSH and application services will not be restarted or have their access settings reset.")
         print("Scheduled Server Guard health checks will be stopped and removed; runtime CPU weights expire at reboot.")
+        print("Scheduled security-file checks will also stop; native Fail2Ban bans and Ubuntu security updates remain configured.")
 
     def _backup(self, plan):
         name = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
@@ -221,11 +223,15 @@ class UninstallManager:
             self.r.run("systemctl", "disable", "--now", "server-guard-health.timer")
         if self.f.path(MONITOR_UNIT).exists():
             self.r.run("systemctl", "stop", "server-guard-health.service")
+        if self.f.path(DEFENSE_TIMER).exists():
+            self.r.run("systemctl", "disable", "--now", "server-guard-defense.timer")
+        if self.f.path(DEFENSE_UNIT).exists():
+            self.r.run("systemctl", "stop", "server-guard-defense.service")
         if self.f.path(ROLLBACK_UNITS[0]).exists():
             self.r.run("systemctl", "disable", "--now", "server-guard-rollback.timer")
         if self.f.path(ROLLBACK_UNITS[1]).exists():
             self.r.run("systemctl", "stop", "server-guard-rollback.service")
-        for path in [*ROLLBACK_UNITS, MONITOR_TIMER, MONITOR_UNIT]:
+        for path in [*ROLLBACK_UNITS, MONITOR_TIMER, MONITOR_UNIT, DEFENSE_TIMER, DEFENSE_UNIT]:
             self.f.path(path).unlink(missing_ok=True)
         self.r.run("systemctl", "daemon-reload")
         # Access no longer depends on the manager. Delete only its owned paths.

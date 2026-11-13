@@ -13,6 +13,7 @@ import time
 import uuid
 
 from .core import GuardError
+from .defense_config import CONFIG as DEFENSE_CONFIG, RESULTS as DEFENSE_RESULTS, DefensePolicy
 
 
 REPORTS = "/var/lib/server-guard/health"
@@ -167,21 +168,22 @@ class LinuxResources:
 
 class ReportStore:
     """Bounded private snapshots shared by CLI, terminal and scheduled checks."""
-    def __init__(self, files):
+    def __init__(self, files, directory=REPORTS, retention=200):
         self.f = files
+        self.directory, self.retention = directory, retention
 
     def save(self, report):
-        folder = self.f.path(REPORTS)
+        folder = self.f.path(self.directory)
         folder.mkdir(parents=True, mode=0o700, exist_ok=True)
         with (folder / ".lock").open("a") as lock:
             os.chmod(folder / ".lock", 0o600)
             fcntl.flock(lock, fcntl.LOCK_EX)
-            self.f.write(REPORTS + "/" + report["id"] + ".json", json.dumps(report, indent=2))
-            for old in sorted(folder.glob("*.json"), reverse=True)[200:]:
+            self.f.write(self.directory + "/" + report["id"] + ".json", json.dumps(report, indent=2))
+            for old in sorted(folder.glob("*.json"), reverse=True)[self.retention:]:
                 old.unlink()
 
     def history(self, limit=20):
-        folder = self.f.path(REPORTS)
+        folder = self.f.path(self.directory)
         result = []
         for file in sorted(folder.glob("*.json"), reverse=True)[:limit]:
             try:
@@ -291,13 +293,35 @@ class HealthChecker:
                      "Inspect the named service before restarting it; intentional stops are not failures.")
         if self.h.tx.pending():
             self.finding("Access change", "WARN", "A rollback-protected access change is pending.", "Confirm from a new administrator key login or roll back.")
+        if self.f.path(DEFENSE_CONFIG).exists():
+            self.defenses()
+
+    def defenses(self):
+        code, output = self.command("systemctl", "is-active", "server-guard-defense.timer")
+        try:
+            policy = DefensePolicy.load(self.f)
+            if not policy.enabled:
+                self.finding("Automatic defense profile", "INFO", "Extra profile disabled; basic SSH/firewall checks remain above.")
+                return
+            self.finding("Automatic defense timer", "PASS" if code == 0 else "UNKNOWN" if code is None else "WARN",
+                         output or "not active", "Inspect defense status and journalctl -u server-guard-defense.service.")
+            report = json.loads(self.f.path(DEFENSE_RESULTS + "/latest.json").read_text())
+            stale = time.time() - report["time"] > policy.minutes * 120 + 180
+            status = "WARN" if stale else report["status"]
+            if status not in {"PASS", "WARN", "CRITICAL", "UNKNOWN"}:
+                raise GuardError("Invalid defense report status.")
+            self.finding("Automatic defense findings", status, "Last report is stale." if stale else
+                         f"{len(report['findings'])} findings from selected security files/firewall/services.",
+                         "Use defense status/history to review; accept only explained changes with defense baseline --yes.")
+        except (OSError, ValueError, TypeError, KeyError, GuardError):
+            self.finding("Automatic defense findings", "UNKNOWN", "No valid defense report/configuration available yet.", "Run defense scan and inspect its journal; missing evidence does not mean secure.")
 
     def check(self, progress=None, security=True):
         self.results = []
         report = {"schema": 1, "id": f"{time.time_ns():020d}-{uuid.uuid4().hex[:8]}", "time": time.time(), "metrics": {}}
         phases = [("Sampling CPU, RAM, swap, pressure, processes and network", self.resources.sample),
                   ("Checking mounted storage and inode usage", self.resources.disks)]
-        total = 13 if security else 2
+        total = 13 + int(self.f.path(DEFENSE_CONFIG).exists()) if security else 2
         self.progress, self.step, self.total = progress, 2, total
         limits = self.config()
         for i, (label, probe) in enumerate(phases, 1):

@@ -20,6 +20,8 @@ from .uninstall import UninstallManager
 from .health import DEFAULT_THRESHOLDS, HealthChecker, HealthMonitor, HealthView, ReportStore, utc
 from .maintenance import APPLICATION_UNITS, MaintenanceActions, StorageManager, absolute_path
 from .updater import UpdateManager
+from .defense import DefenseManager
+from .defense_config import JAILS, client_address, nginx_log, trusted_network
 
 
 def parser():
@@ -36,6 +38,23 @@ def parser():
     c.add_argument("--ref", help="branch/tag/commit; defaults to the recorded installation ref")
     c.add_argument("--sha256", help="expected GitHub source archive SHA-256")
     c.add_argument("--allow-downgrade", action="store_true")
+    c = sub.add_parser("defense", help="automatic attack blocking, integrity checks and local security alerts")
+    ds = c.add_subparsers(dest="action", required=True)
+    c = ds.add_parser("enable")
+    c.add_argument("--trusted", nargs="*", default=[], type=trusted_network)
+    c.add_argument("--nginx-log", action="append", default=[], type=nginx_log)
+    c.add_argument("--direct-web-clients", action="store_true")
+    c.add_argument("--minutes", type=int, default=15)
+    c.add_argument("--yes", action="store_true")
+    for name in ["disable", "baseline"]:
+        ds.add_parser(name).add_argument("--yes", action="store_true")
+    ds.add_parser("status")
+    ds.add_parser("history")
+    ds.add_parser("scan").add_argument("--scheduled", action="store_true", help=argparse.SUPPRESS)
+    c = ds.add_parser("unban")
+    c.add_argument("jail", choices=JAILS)
+    c.add_argument("address", type=client_address)
+    c.add_argument("--yes", action="store_true")
     c = sub.add_parser("init")
     c.add_argument("--ssh-port", type=port, default=22)
     c = sub.add_parser("confirm")
@@ -325,6 +344,20 @@ def dispatch(h, a):
         h.r.run("apt-get", "update", capture=False)
         h.r.run("apt-get", "upgrade", capture=False)
         print("Review reboot requirements using status. Update the panel and V2Ray separately.")
+    elif cmd == "defense":
+        manager = DefenseManager(h)
+        if a.action == "enable":
+            manager.enable(manager.proposed(a.trusted, a.nginx_log, a.minutes, a.direct_web_clients), a.yes)
+        elif a.action in {"disable", "baseline"}:
+            getattr(manager, a.action)(a.yes)
+        elif a.action == "scan":
+            manager.scan(a.scheduled)
+        elif a.action == "unban":
+            manager.unban(a.jail, a.address, a.yes)
+        elif a.action == "history":
+            manager.history()
+        else:
+            manager.status()
     elif cmd == "self-update":
         UpdateManager(h).run(check=a.check, repository=a.repo, ref=a.ref, expected=a.sha256,
                              allow_downgrade=a.allow_downgrade)
@@ -421,7 +454,7 @@ def health_command(h, a):
 def execute_locked(h, args):
     """Command adapter shared by CLI and terminal UI; lock only submitted work."""
     parsed = parser().parse_args(args) if isinstance(args, list) else args
-    if parsed.command == "self-update":
+    if parsed.command == "self-update" or parsed.command == "defense" and parsed.action in {"scan", "status", "history"}:
         # Network inspection is unlocked; the installer locks/rechecks only publication.
         dispatch(h, parsed)
         return

@@ -189,7 +189,9 @@ class ToolInstallationTests(unittest.TestCase):
             files, project = installed(directory), candidate(directory)
             run_install(ToolInstaller(files.root), project, upgrade_only=True)
             previous = files.path(CURRENT).resolve()
-            (project / "server_guard/__init__.py").write_text('__version__="1.5.1"\n')
+            major, minor, patch_number = __version__.split(".")
+            next_version = f"{major}.{minor}.{int(patch_number) + 1}"
+            (project / "server_guard/__init__.py").write_text(f'__version__="{next_version}"\n')
             installer = ToolInstaller(files.root)
             publish = installer._atomic
             def fail_launcher(path, *args, **kwargs):
@@ -201,7 +203,7 @@ class ToolInstallationTests(unittest.TestCase):
             self.assertEqual(files.path(CURRENT).resolve(), previous)
             self.assertEqual(launcher_version(files), __version__)
             result = run_install(ToolInstaller(files.root), project, upgrade_only=True)
-            self.assertEqual(launcher_version(files), "1.5.1")
+            self.assertEqual(launcher_version(files), next_version)
             self.assertTrue(previous.is_dir())
             self.assertEqual(source_version(previous), __version__)
             self.assertFalse((Path(result["backup"]) / "opt/server-guard/releases").exists())

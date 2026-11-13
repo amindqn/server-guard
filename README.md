@@ -26,7 +26,7 @@ Resume the first-time wizard from the new administrator SSH connection:
 sudo --preserve-env=SSH_CONNECTION server-guard setup
 ```
 
-The home menu has nine groups: **setup, accounts/SSH, firewall/web, applications/databases, V2Ray, health/maintenance, changes/recovery, uninstall, and update Server Guard**. Existing features remain available inside those groups. Setup shows completed steps and the next action; roles, database engines and key actions use numbered choices. Enter a number, press Enter to accept a default, use `0` to go back, or enter `:back` to cancel a form. Colors are optional (`NO_COLOR=1`), and all choices/errors are written as text. No additional terminal UI packages are needed.
+The home menu has ten groups: **setup, accounts/SSH, firewall/web, applications/databases, V2Ray, health/maintenance, changes/recovery, uninstall, update Server Guard, and automatic attack protection**. Existing features remain available inside those groups. Setup shows completed steps and the next action; roles, database engines and key actions use numbered choices. Enter a number, press Enter to accept a default, use `0` to go back, or enter `:back` to cancel a form. Colors are optional (`NO_COLOR=1`), and all choices/errors are written as text. No additional terminal UI packages are needed.
 
 For an install without opening the UI, append `--no-ui`. With no interactive terminal, the installer prints the command to open setup later. Have provider console access and a snapshot ready before applying security changes. Keep the panel/database ports closed in your provider firewall. [Detailed terminal walkthrough](docs/TERMINAL_UI.md).
 
@@ -97,6 +97,28 @@ A private recovery copy is created under `/var/backups/server-guard/`; its locat
 The default panel recommendation is **CloudPanel**, because it supports static/front-end sites, Node.js, Python, PHP, reverse proxies, and separate Admin / Site Manager / site-specific User permissions. Its panel-managed databases are MySQL/MariaDB. **MongoDB is an optional service managed by this tool**, alongside either panel. **aaPanel is also supported** if you prefer its broader plugin and database ecosystem. Install exactly one panel first, on an otherwise empty server; then add MongoDB. PostgreSQL/Redis need separate installation with CloudPanel. MongoDB supplements the panel's database engine; it does not replace CloudPanel's required MySQL/MariaDB installation.
 
 Read [the research and tradeoffs](docs/RESEARCH.md), [ongoing operations](docs/OPERATIONS.md), and [the Ubuntu validation checklist](docs/VALIDATION.md).
+
+## Automatic attack protection
+
+Version **1.6.0** adds menu **10 Automatic attack protection and security alerts**. After updating the manager and confirming Guided setup, review and enable the profile:
+
+```bash
+sudo --preserve-env=SSH_CONNECTION server-guard defense enable        # preview
+sudo --preserve-env=SSH_CONNECTION server-guard defense enable --yes  # activate
+```
+
+Keep the existing SSH connection open. Activation arms a **10-minute rollback**. Reconnect with a new administrator **key** login and run the printed `server-guard confirm CHANGE_ID` command. Subsequent checks/blocking run automatically, including after boot.
+
+The profile adds **increasing bans for repeated SSH attacks**, trusted root-origin SSH journal matching, optional direct-client **Nginx authentication/bot-search bans**, scheduled **critical-file and running-firewall drift detection**, stopped-defense/AppArmor checks, and private alert history. Ubuntu security-update timers are enabled without automatic reboot. The current SSH client's address is exempted from managed bans when its environment is preserved; this does not open firewall ports. Enable/disable is rollback protected, and existing settings/users/application/database data are retained.
+
+```bash
+sudo server-guard defense scan
+sudo server-guard defense status
+sudo server-guard defense history
+sudo server-guard defense unban sshd CLIENT_IP --yes
+```
+
+Alerts remain local, and changed files are never automatically deleted, restored or accepted as trusted. A legitimate reviewed change can be accepted with `defense baseline --yes` after confirming pending access changes. Optional web bans require reviewed root-owned logs and `--direct-web-clients`; they are unsuitable for an origin behind a CDN/upstream proxy. Application WAF/authentication controls, external alerts, restore-tested off-server backups and provider DDoS protection still need deployment-specific setup. Installing/updating the manager does not silently enable this profile. [Setup, limits, commands and primary sources](docs/DEFENSE.md).
 
 ## Server checks, monitoring and cleanup
 
@@ -169,13 +191,13 @@ scp -r /PATH/TO/server-config root@SERVER_IP:/root/server-config
 
 Use `scp -P CURRENT_SSH_PORT` if the current port is not 22. Replace placeholders and paths with real values. Alternatively, copy and extract the supplied release archive on the server.
 
-For the archive, copy `server-guard-1.5.0.tar.gz` and its `.sha256` file to `/root`, then on the server run:
+For the archive, copy `server-guard-1.6.0.tar.gz` and its `.sha256` file to `/root`, then on the server run:
 
 ```bash
 cd /root
-sha256sum -c server-guard-1.5.0.tar.gz.sha256
-tar -xzf server-guard-1.5.0.tar.gz
-cd /root/server-guard-1.5.0
+sha256sum -c server-guard-1.6.0.tar.gz.sha256
+tar -xzf server-guard-1.6.0.tar.gz
+cd /root/server-guard-1.6.0
 ```
 
 Use this extracted directory in place of `/root/server-config` below. The adjacent checksum detects transfer damage; obtain the archive/checksum through a trusted channel.

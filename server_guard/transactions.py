@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from .core import FirewallBuilder, GuardError, POLICY
+from .defense_config import BASELINE, CONFIG, DATABASE, TIMER as DEFENSE_TIMER, UNIT as DEFENSE_UNIT
 
 
 PENDING = "/var/lib/server-guard/pending.json"
@@ -20,7 +21,8 @@ MANAGED = [POLICY, "/etc/ssh/sshd_config", "/etc/ssh/server-guard.conf",
            "/etc/fail2ban/jail.d/90-server-guard.local",
            "/etc/sysctl.d/90-server-guard.conf",
            "/etc/apt/apt.conf.d/90-server-guard",
-           "/etc/systemd/journald.conf.d/90-server-guard.conf", "/etc/ufw/ufw.conf"]
+           "/etc/systemd/journald.conf.d/90-server-guard.conf", "/etc/ufw/ufw.conf",
+           CONFIG, DATABASE, BASELINE, DEFENSE_TIMER, DEFENSE_UNIT]
 
 
 class Transactions:
@@ -32,7 +34,7 @@ class Transactions:
         return json.loads(p.read_text()) if p.exists() else None
 
     def require_clear(self):
-        if self.pending():
+        if self.f.path(PENDING).exists():
             raise GuardError("An access change is pending. Confirm it from a new SSH login, or rollback.")
 
     def active(self, service):
@@ -60,7 +62,8 @@ class Transactions:
                 "nft": nft.stdout if nft.returncode == 0 else None,
                 "services": {name: {"active": self.active(name), "enabled":
                     self.r.run("systemctl", "is-enabled", "--quiet", name, check=False).returncode == 0}
-                    for name in ["ufw", "server-guard-firewall", "fail2ban"]},
+                    for name in ["ufw", "server-guard-firewall", "fail2ban", "apt-daily.timer",
+                                 "apt-daily-upgrade.timer", "server-guard-defense.timer"]},
                 "sysctls": {}}
         ufw = self.r.run("ufw", "status", check=False) if self.f.path("/usr/sbin/ufw").exists() else None
         data["ufw_active"] = bool(ufw and "Status: active" in ufw.stdout)

@@ -11,6 +11,7 @@ import time
 from .core import (FirewallBuilder, GuardError, POLICY, PolicyStore, SSHBuilder,
                    defaults, port, public_key, username, write_user_key)
 from .transactions import Transactions, verified_login
+from .defense_config import AUTOMATIC_UPDATES, DefensePolicy, fail2ban_config
 from . import __version__
 
 
@@ -170,6 +171,8 @@ class Host:
         print("Forwarded traffic: DROP (Docker bridges, routing and Kubernetes are unsupported).")
         print("Outbound traffic: allowed. IPv4/IPv6 ICMP and DHCP replies remain available.")
         print("Unconfirmed changes roll back after 10 minutes; packages/users are retained.")
+        if DefensePolicy.load(self.f).enabled:
+            print("Automatic defenses remain enabled. SSH bans follow the applied port. After confirming intentional changes, review defense scan and explicitly update its trusted baseline.")
         print("\nProposed nftables table:\n" + FirewallBuilder.build(state))
 
     def firewall_load(self):
@@ -249,25 +252,13 @@ class Host:
                 self.r.run("ufw", "disable")
                 self.r.run("systemctl", "disable", "ufw")
                 self.firewall_load()
-            self.f.write("/etc/fail2ban/jail.d/90-server-guard.local", f"""[sshd]
-enabled = true
-backend = systemd
-port = {state['ssh']['port']}
-maxretry = 5
-findtime = 10m
-bantime = 1h
-banaction = nftables-multiport
-ignoreip = 127.0.0.1/8 ::1
-""")
+            self.f.write("/etc/fail2ban/jail.d/90-server-guard.local", fail2ban_config(state["ssh"]["port"], DefensePolicy.load(self.f)))
             self.r.run("fail2ban-client", "-t")
             self.r.run("systemctl", "enable", "--now", "fail2ban")
             self.r.run("systemctl", "restart", "fail2ban")
             self.f.write("/etc/sysctl.d/90-server-guard.conf", SYSCTL, 0o644)
             self.r.run("sysctl", "-p", "/etc/sysctl.d/90-server-guard.conf")
-            self.f.write("/etc/apt/apt.conf.d/90-server-guard", """APT::Periodic::Update-Package-Lists "1";
-APT::Periodic::Unattended-Upgrade "1";
-Unattended-Upgrade::Automatic-Reboot "false";
-""", 0o644)
+            self.f.write("/etc/apt/apt.conf.d/90-server-guard", AUTOMATIC_UPDATES, 0o644)
             self.f.write("/etc/systemd/journald.conf.d/90-server-guard.conf", """[Journal]
 Storage=persistent
 SystemMaxUse=512M

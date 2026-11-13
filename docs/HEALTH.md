@@ -1,5 +1,7 @@
 # Server health, monitoring and maintenance
 
+The optional [automatic defense profile](DEFENSE.md) adds native attack bans and scheduled security-file/firewall checks. When configured, the normal health check adds a fourteenth probe showing its timer and latest/stale findings. Open menu **10** or use `defense status`, `scan` and `history` for its controls. Existing health monitoring does not automatically enable the defense profile or accept changed security files.
+
 Open `sudo server-guard` → **6 Server health, monitoring and maintenance**. All previous security-status, audit, package-update and SSH-help actions remain under **8 Security details, audits and updates** in that menu.
 
 ## Check now and monitor results
