@@ -29,7 +29,7 @@ Run `sudo server-guard` or `sudo server-guard menu`:
 
 ```text
 ==============================================================================
-SERVER GUARD 1.6.0  /  Management
+SERVER GUARD 1.6.1  /  Management
 ==============================================================================
 Policy: SSH 22 | root SSH disabled | 1 users | firewall config saved.
    1  Setup assistant / next step

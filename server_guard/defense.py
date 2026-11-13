@@ -17,6 +17,7 @@ from .defense_config import (AUTOMATIC_UPDATES, BASELINE, CONFIG, DATABASE, JAIL
                              DefensePolicy, client_address, fail2ban_config, timer)
 from .integrity import IntegrityMonitor, opened
 from .health import ReportStore
+from .fail2ban import Fail2BanService
 
 
 class DefenseManager:
@@ -164,6 +165,8 @@ class DefenseManager:
                     raise GuardError("Existing security drift must be reviewed before changing defenses. Use defense scan, then explicitly accept only explained changes with defense baseline --yes.")
             except (OSError, ValueError, KeyError) as exc:
                 raise GuardError("Repair/review the existing integrity baseline before changing defenses.") from exc
+        if self.h.tx.active("fail2ban"):
+            Fail2BanService(self.r).wait()
         age = self.r.run("fail2ban-client", "get", "dbpurgeage", check=False, timeout=5)
         try:
             retention = max(604800, int(age.stdout.strip())) if age.returncode == 0 else 604800
@@ -184,9 +187,10 @@ class DefenseManager:
                 self.r.run("systemctl", "daemon-reload")
                 self.r.run("systemctl", "enable", "--now", "apt-daily.timer", "apt-daily-upgrade.timer")
             self.r.run("systemctl", "enable", "--now", "fail2ban")
-            self.r.run("systemctl", "restart", "fail2ban")
+            jails = JAILS if policy.enabled and policy.nginx_logs else JAILS[:1]
+            Fail2BanService(self.r).restart(jails)
             # Prove the jails are actually running rather than only parsing configuration.
-            for jail in JAILS if policy.enabled and policy.nginx_logs else JAILS[:1]:
+            for jail in jails:
                 self.verify_jail(jail, policy)
             if policy.enabled:
                 database = self.r.run("fail2ban-client", "get", "dbfile", timeout=5).stdout.strip().strip("'\"")

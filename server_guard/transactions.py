@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .core import FirewallBuilder, GuardError, POLICY
 from .defense_config import BASELINE, CONFIG, DATABASE, TIMER as DEFENSE_TIMER, UNIT as DEFENSE_UNIT
+from .fail2ban import Fail2BanService
 
 
 PENDING = "/var/lib/server-guard/pending.json"
@@ -130,6 +131,9 @@ WantedBy=timers.target
             # Firewall oneshot has no ExecStop: stopping does not delete restored rules.
             self.r.run("systemctl", "enable" if status["enabled"] else "disable", name, check=status["enabled"])
             self.r.run("systemctl", "restart" if status["active"] else "stop", name, check=status["active"])
+            if name == "fail2ban" and status["active"]:
+                # Do not archive recovery as complete before restored protection answers.
+                Fail2BanService(self.r).wait()
         if data.get("ufw_active"):
             self.r.run("ufw", "--force", "enable")
         self.r.run("systemctl", "try-restart", "systemd-journald", check=False)

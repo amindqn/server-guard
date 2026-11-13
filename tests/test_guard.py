@@ -271,7 +271,7 @@ class FakeRunner:
         self.calls = []
         self.timer = timer
 
-    def run(self, *args, check=True, input=None, capture=True):
+    def run(self, *args, check=True, input=None, capture=True, timeout=None):
         self.calls.append((args, input))
         code, stdout = 0, ""
         if args[:2] == ("nft", "list"):

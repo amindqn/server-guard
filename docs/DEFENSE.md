@@ -1,6 +1,6 @@
 # Automatic attack protection
 
-Server Guard 1.6.0 adds an optional automatic defense profile for an already configured Ubuntu 24.04 server. It combines native attack blocking with security-file/firewall drift detection. It cannot guarantee protection from every attack, establish that an existing machine is clean, or replace application security and upstream DDoS filtering.
+Server Guard 1.6.1 provides an optional automatic defense profile for an already configured Ubuntu 24.04 server. It combines native attack blocking with security-file/firewall drift detection. It cannot guarantee protection from every attack, establish that an existing machine is clean, or replace application security and upstream DDoS filtering.
 
 ## Enable on an existing server
 
@@ -35,6 +35,8 @@ After confirmation, protection runs through Fail2Ban, Ubuntu timers and the secu
 - **Security patches:** Ubuntu's automatic update timers are enabled and automatic reboot is disabled. The tool retains packaged origin policy; this does not establish coverage of panel repositories, standalone V2Ray binaries or every application dependency. Security updates can restart affected services according to package behavior.
 
 The tool validates native Fail2Ban configuration before restarting it, then checks the expected running jails, basic retry/time settings, nftables action names and required ban exemptions. It also requires a persistent native ban database and verifies effective APT periodic/update/no-reboot settings. A detected conflicting override stops the change and rolls back. These checks are not proof that a future packet was dropped; verify actual bans externally on a disposable VM.
+
+**Startup readiness (1.6.1):** systemd can finish its restart operation before Fail2Ban's socket/jails answer. The tool now waits for successful native `ping` and required-jail `status` responses, with a 30-second readiness budget, short per-probe timeouts and immediate failure for a failed/inactive unit. A timeout reports status/journal/config-test commands and still triggers recovery. Restoring a previously active Fail2Ban service waits for its control endpoint before completing recovery. This fixes the premature `Failed to access socket path` rollback seen with 1.6.0. The [upstream service definition](https://github.com/fail2ban/fail2ban/blob/1.0.2/files/fail2ban.service.in) uses `Type=simple`; a started unit alone is not a readiness test.
 
 Example with an additional stable administration address and a 30-minute check interval:
 

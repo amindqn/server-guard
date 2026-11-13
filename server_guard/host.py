@@ -12,6 +12,7 @@ from .core import (FirewallBuilder, GuardError, POLICY, PolicyStore, SSHBuilder,
                    defaults, port, public_key, username, write_user_key)
 from .transactions import Transactions, verified_login
 from .defense_config import AUTOMATIC_UPDATES, DefensePolicy, fail2ban_config
+from .fail2ban import Fail2BanService
 from . import __version__
 
 
@@ -255,7 +256,7 @@ class Host:
             self.f.write("/etc/fail2ban/jail.d/90-server-guard.local", fail2ban_config(state["ssh"]["port"], DefensePolicy.load(self.f)))
             self.r.run("fail2ban-client", "-t")
             self.r.run("systemctl", "enable", "--now", "fail2ban")
-            self.r.run("systemctl", "restart", "fail2ban")
+            Fail2BanService(self.r).restart(("sshd",))
             self.f.write("/etc/sysctl.d/90-server-guard.conf", SYSCTL, 0o644)
             self.r.run("sysctl", "-p", "/etc/sysctl.d/90-server-guard.conf")
             self.f.write("/etc/apt/apt.conf.d/90-server-guard", AUTOMATIC_UPDATES, 0o644)

@@ -2,6 +2,8 @@
 
 A repeatable administration tool for **Ubuntu 24.04 LTS**, targeting your **x86_64** server. Install it once, follow the terminal setup wizard, then run `server-guard` whenever you need to manage the server. Python's standard library handles orchestration; Ubuntu packages provide the actual security services.
 
+See the [complete command reference](docs/commands.md) for SSH key setup/login, installation and upgrades, users, firewall, panels, MongoDB/V2Ray, automatic defenses, monitoring, storage cleanup, recovery and uninstall. It separates commands for your computer from commands for the server and is installed with the other guides.
+
 ## Quick start
 
 From your normal SSH account with sudo access, run this command on the server. It downloads the `master` branch of [amindqn/server-guard](https://github.com/amindqn/server-guard):
@@ -107,6 +109,8 @@ sudo --preserve-env=SSH_CONNECTION server-guard defense enable        # preview
 sudo --preserve-env=SSH_CONNECTION server-guard defense enable --yes  # activate
 ```
 
+Use **1.6.1 or later** for activation. This patch waits for Fail2Ban's control socket and required jails after restart; version 1.6.0 could check too early and roll back a valid setup. If your installed copy shows 1.6.0, publish/install the fixed release using the upgrade instructions above first.
+
 Keep the existing SSH connection open. Activation arms a **10-minute rollback**. Reconnect with a new administrator **key** login and run the printed `server-guard confirm CHANGE_ID` command. Subsequent checks/blocking run automatically, including after boot.
 
 The profile adds **increasing bans for repeated SSH attacks**, trusted root-origin SSH journal matching, optional direct-client **Nginx authentication/bot-search bans**, scheduled **critical-file and running-firewall drift detection**, stopped-defense/AppArmor checks, and private alert history. Ubuntu security-update timers are enabled without automatic reboot. The current SSH client's address is exempted from managed bans when its environment is preserved; this does not open firewall ports. Enable/disable is rollback protected, and existing settings/users/application/database data are retained.
@@ -191,13 +195,13 @@ scp -r /PATH/TO/server-config root@SERVER_IP:/root/server-config
 
 Use `scp -P CURRENT_SSH_PORT` if the current port is not 22. Replace placeholders and paths with real values. Alternatively, copy and extract the supplied release archive on the server.
 
-For the archive, copy `server-guard-1.6.0.tar.gz` and its `.sha256` file to `/root`, then on the server run:
+For the archive, copy `server-guard-1.6.1.tar.gz` and its `.sha256` file to `/root`, then on the server run:
 
 ```bash
 cd /root
-sha256sum -c server-guard-1.6.0.tar.gz.sha256
-tar -xzf server-guard-1.6.0.tar.gz
-cd /root/server-guard-1.6.0
+sha256sum -c server-guard-1.6.1.tar.gz.sha256
+tar -xzf server-guard-1.6.1.tar.gz
+cd /root/server-guard-1.6.1
 ```
 
 Use this extracted directory in place of `/root/server-config` below. The adjacent checksum detects transfer damage; obtain the archive/checksum through a trusted channel.
